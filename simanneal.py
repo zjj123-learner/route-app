@@ -20,7 +20,7 @@
 import math
 import random
 
-from optimizer import DEFAULTS, evaluate_order, nearest_neighbor
+from optimizer import DEFAULTS, evaluate_order, nearest_neighbor, optimize_route
 
 
 def _build_base(tasks, fixed_positions):
@@ -150,6 +150,9 @@ if __name__ == "__main__":
 晚上7点前从驿站取快递回家"""
     tasks = parse_tasks(demo)
     start = {"name": "家", "lat": 31.235, "lng": 121.47}
+    for i, t in enumerate(tasks):
+        t["lat"] = 31.23 + i * 0.01
+        t["lng"] = 121.47 + i * 0.01
     h, s = sa_compare(tasks, start, seed=1)
     print("启发式  total:", h["stats"]["total"], " 方法:", h["method"])
     print("退火    total:", s["stats"]["total"], " 方法:", s["method"])

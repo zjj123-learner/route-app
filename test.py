@@ -1,5 +1,6 @@
 from parser import parse_tasks
 from optimizer import optimize_route
+from simanneal import sa_route
 from geocode import extract_keyword
 import os
 import tempfile
@@ -761,6 +762,35 @@ def test_plan_api_route_lines():
     finally:
         route.clear_cache()
 
+def test_simanneal():
+    from optimizer import nearest_neighbor, evaluate_order, DEFAULTS
+    demo = """上午9点去银行办卡
+下午3点去学校接孩子放学（重要）
+顺便去超市买菜
+晚上7点前从驿站取快递回家"""
+    tasks = parse_tasks(demo)
+    start = {"name": "家", "lat": 31.235, "lng": 121.47}
+    opts = {"mode": "walk"}
+    for i, t in enumerate(tasks):
+        t["lat"] = 31.23 + i * 0.01
+        t["lng"] = 121.47 + i * 0.01
+    s = sa_route(tasks, start, dict(opts), seed=42)
+    nn_opts = dict(DEFAULTS)
+    nn_opts.update(opts)
+    nn_total = evaluate_order(nearest_neighbor(tasks, start, nn_opts), start, nn_opts)["total"]
+    check(s["method"] == "simanneal", "退火: method 标记 simanneal")
+    check(s["stats"]["total"] <= nn_total, "退火: 从最近邻起步, 至少不差于最近邻")
+    check(len(s["order"]) == len(tasks), "退火: 任务不丢不重")
+    check(sorted(t["name"] for t in s["order"]) == sorted(t["name"] for t in tasks), "退火: 任务集合一致")
+    fixed = {0: 2, 3: 0}
+    s2 = sa_route(tasks, start, dict(opts), fixed_positions=fixed, seed=7)
+    check(s2["order"][0] is tasks[3] and s2["order"][2] is tasks[0], "退火: 锁定位置生效")
+    empty = sa_route([], start, dict(opts))
+    check(empty["order"] == [] and empty["stats"] is None, "退火: 空任务安全返回")
+    a = sa_route(tasks, start, dict(opts), seed=99)["order"]
+    b = sa_route(tasks, start, dict(opts), seed=99)["order"]
+    check([t["name"] for t in a] == [t["name"] for t in b], "退火: 同 seed 结果可复现")
+
 
 if __name__ == "__main__":
     test_parser()
@@ -784,6 +814,7 @@ if __name__ == "__main__":
     test_route_fail_retry()
     test_plan_api_route_lines()
     test_plans_api()
+    test_simanneal()
     print(f"\n共 {passed + failures} 项, 通过 {passed}, 失败 {failures}")
     if failures:
         exit(1)

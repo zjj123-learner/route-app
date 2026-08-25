@@ -1,0 +1,13 @@
+{
+  "name": "智能行程规划",
+  "short_name": "行程规划",
+  "description": "把今天要做的事丢进来, 自动排好最优顺序",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef1fb",
+  "theme_color": "#4f46e5",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

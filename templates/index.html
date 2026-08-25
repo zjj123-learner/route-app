@@ -1,0 +1,1464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#4f46e5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="行程规划">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<title>智能行程规划</title>
+<!-- ==================== 高德地图 Key(放最顶部, 方便改) ==================== -->
+<script>
+  // 高德 Key / 安全密钥由后端从环境变量注入(config.py / README), 不用再改这个文件。
+  // 没配 Key 或 Key 无效时, 地图会自动回退到 Leaflet + OpenStreetMap, 不影响使用。
+  window.AMAP_JS_KEY = '{{ amap_js_key }}';
+  {% if amap_js_security_code %}
+  window._AMapSecurityConfig = {securityJsCode: '{{ amap_js_security_code }}'};
+  {% endif %}
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --primary: #4f46e5;
+    --primary-soft: #eef2ff;
+    --teal: #0d9488;
+    --teal-soft: #f0fdfa;
+    --amber: #f59e0b;
+    --amber-soft: #fffbeb;
+    --danger: #e11d48;
+    --text: #1e293b;
+    --text-soft: #64748b;
+    --line: #e7e9f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 16px 60px;
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    color: var(--text);
+    background: linear-gradient(160deg, #eef1fb 0%, #f6f7fc 55%, #fdf6f2 100%);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  .layout { display: block; }
+  @media (min-width: 920px) {
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
+  }
+
+  /* ===== 顶部标题 ===== */
+  .topbar { display: flex; align-items: center; gap: 14px; margin: 6px 6px 22px; }
+  .logo {
+    width: 52px; height: 52px; border-radius: 16px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; color: #fff;
+    background: linear-gradient(135deg, #4f46e5, #7c6cf0);
+    box-shadow: 0 10px 22px rgba(79, 70, 229, 0.32);
+  }
+  .topbar h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+  .topbar p { margin: 3px 0 0; font-size: 13px; color: var(--text-soft); }
+
+  /* ===== 卡片 ===== */
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 6px 24px rgba(30, 41, 59, 0.07);
+  }
+  .card h2 { margin: 0 0 14px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .card h2 small { font-weight: normal; font-size: 12px; color: var(--text-soft); }
+
+  /* ===== 按钮 ===== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: none; cursor: pointer; color: #fff; font-size: 15px;
+    border-radius: 12px; padding: 12px 22px;
+    background: linear-gradient(135deg, #4f46e5, #7c6cf0);
+    box-shadow: 0 8px 18px rgba(79, 70, 229, 0.28);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(79, 70, 229, 0.36); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  .btn-block { width: 100%; }
+  .btn-sm { padding: 9px 16px; font-size: 13px; border-radius: 10px; }
+  .btn-ghost { background: #fff; color: var(--primary); border: 1px solid #d8dcf7; box-shadow: none; }
+  .btn-ghost:hover { background: var(--primary-soft); box-shadow: none; }
+
+  /* ===== 输入控件 ===== */
+  .input, .select {
+    width: 100%; padding: 10px 12px; font-size: 14px;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: #fafbff; color: var(--text); outline: none;
+    transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  }
+  .input:focus, .select:focus {
+    border-color: var(--primary); background: #fff;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  }
+  .select { cursor: pointer; }
+  /* ===== 我的家 ===== */
+  .home-row { display: flex; gap: 10px; }
+  .home-row .input { flex: 1; }
+  .geo-msg { margin-top: 10px; font-size: 13px; color: var(--teal); min-height: 18px; }
+  .geo-msg.err { color: var(--danger); }
+  .hint { font-size: 12px; color: var(--text-soft); line-height: 1.7; margin: 8px 0 0; }
+
+  /* ===== 历史计划 ===== */
+  .hist-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 12px 14px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: 12px;
+    cursor: pointer; transition: border-color 0.12s, background 0.12s;
+  }
+  .hist-row:hover { border-color: var(--primary); background: var(--primary-soft); }
+  .hist-row b { font-size: 14px; }
+  .hist-row .hint { margin: 2px 0 0; }
+
+  /* ===== 行程设置 ===== */
+  .set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 14px; }
+  .set-item label { display: block; font-size: 12px; color: var(--text-soft); margin-bottom: 6px; }
+  .pref-block { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .pref-label { display: block; font-size: 12px; color: var(--text-soft); margin-bottom: 8px; }
+  .pref-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--primary-soft); color: var(--primary);
+    border-radius: 999px; padding: 8px 14px; font-size: 13px;
+  }
+  .chip select {
+    border: none; background: transparent; color: var(--primary);
+    font-size: 13px; outline: none; cursor: pointer;
+  }
+
+  /* ===== 任务输入 ===== */
+  #input {
+    width: 100%; min-height: 140px; resize: vertical;
+    padding: 12px 14px; font-size: 14px; line-height: 1.8;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: #fafbff; color: var(--text); outline: none;
+    font-family: inherit;
+    transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  }
+  #input:focus {
+    border-color: var(--primary); background: #fff;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  }
+  .action-row { margin-top: 14px; display: flex; gap: 10px; }
+  .action-row #btn { flex: 1; }
+  .action-row #btnClear { flex: none; }
+
+  /* ===== 结果列表 ===== */
+  #result { margin-top: 18px; }
+  #result h3 { margin: 0 0 6px; font-size: 16px; }
+  .plan-head {
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+    font-size: 13px; color: var(--text-soft);
+    background: var(--primary-soft); border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 12px;
+  }
+  .plan-head b { color: var(--primary); }
+  .stop {
+    display: flex; align-items: center; gap: 12px;
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+    box-shadow: 0 2px 8px rgba(30, 41, 59, 0.05);
+    transition: box-shadow 0.12s, border-color 0.12s;
+  }
+  .stop:hover { box-shadow: 0 5px 16px rgba(30, 41, 59, 0.1); }
+  .stop.dragging { opacity: 0.45; }
+  .stop.locked { border: 1px dashed var(--amber); background: var(--amber-soft); }
+  .stop-base { border-color: #99f6e4; background: var(--teal-soft); }
+  .lock-btn {
+    border: none; background: none; cursor: pointer; font-size: 17px;
+    padding: 4px; flex-shrink: 0; border-radius: 8px; line-height: 1;
+  }
+  .lock-btn:hover { background: rgba(79, 70, 229, 0.08); }
+  .stop-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .act-btn {
+    border: 1px solid var(--line); background: #fff; color: var(--text-soft);
+    border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+    line-height: 1.5; font-family: inherit;
+  }
+  .act-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+
+  /* ===== 出发前确认弹窗 ===== */
+  .modal-mask {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .modal {
+    background: #fff; border-radius: 18px; padding: 22px;
+    width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+  }
+  .modal h3 { margin: 0; font-size: 17px; }
+  .modal-tip { margin: 4px 0 0; font-size: 12px; color: var(--text-soft); }
+  .modal-sec { margin-top: 18px; }
+  .modal-label { font-size: 13px; color: var(--text); font-weight: bold; margin-bottom: 10px; }
+  .modal-label span { font-weight: normal; color: var(--text-soft); font-size: 12px; }
+  .opt-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opt-btn {
+    border: 1px solid var(--line); background: #fff; color: var(--text);
+    border-radius: 999px; padding: 9px 16px; font-size: 13px; cursor: pointer;
+    font-family: inherit; transition: border-color .12s, background .12s;
+  }
+  .opt-btn.on { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); font-weight: bold; }
+  .ck {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 9px 16px; font-size: 13px; cursor: pointer; user-select: none;
+    transition: border-color .12s, background .12s;
+  }
+  .ck input { accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer; }
+  .ck.checked { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .stop-no {
+    width: 27px; height: 27px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 13px; font-weight: bold;
+    background: linear-gradient(135deg, #4f46e5, #7c6cf0);
+  }
+  .stop-base .stop-no { background: linear-gradient(135deg, #0d9488, #2dd4bf); }
+  .stop-main { flex: 1; min-width: 0; font-size: 14px; }
+  .stop-main b { display: block; }
+  .stop-main .place { font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .stop-main .leg { font-size: 12px; color: var(--teal); margin-top: 2px; }
+  .stop-time { flex-shrink: 0; text-align: right; }
+  .stop-time b { display: block; font-size: 15px; color: var(--primary); }
+  .stop-time .arrive { display: block; font-size: 11px; color: var(--text-soft); margin-top: 1px; }
+  .stop-base .stop-time b { color: var(--teal); }
+  .pri {
+    display: inline-block; font-size: 11px; border-radius: 999px;
+    padding: 2px 8px; margin-bottom: 4px; line-height: 1.6;
+  }
+  .pri-1 { background: #f1f5f9; color: #64748b; }
+  .pri-2 { background: var(--primary-soft); color: var(--primary); }
+  .pri-3 { background: #fff1e6; color: #c2410c; }
+  .pri-rest { background: var(--teal-soft); color: var(--teal); }
+  /* ===== 地点选择面板 ===== */
+  .pick-title { font-size: 14px; font-weight: bold; margin: 12px 0 8px; }
+  .pick-title .hint { display: inline; margin: 0; font-weight: normal; }
+  .pick-list {
+    max-height: 200px; overflow-y: auto;
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  .pick-row {
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid #f1f3f9;
+    transition: background 0.12s;
+  }
+  .pick-row:last-child { border-bottom: none; }
+  .pick-row:hover { background: var(--primary-soft); }
+  .pick-row.selected { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
+  .pick-row b { font-size: 14px; }
+  .pick-row .hint { margin: 3px 0 0; display: block; }
+  .pick-badge {
+    display: inline-block; background: #fff7e6; color: var(--amber);
+    font-size: 11px; border-radius: 999px; padding: 1px 8px; margin-left: 6px;
+  }
+  .pick-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+
+  /* ===== 时间轴(纵向卡片式, 每段一行, 永不重叠) ===== */
+  .timeline { margin: 6px 0 18px; }
+  .tl-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: bold; margin: 0 0 12px; }
+  .tl-head .hint { margin: 0; font-weight: normal; }
+  .tl-day { margin-bottom: 18px; }
+  .tl-day-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: bold; color: var(--primary); margin: 0 0 8px; }
+  .tl-day-title::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg, #4f46e5, #7c6cf0); }
+  .tl-seg { display: flex; gap: 10px; margin-bottom: 6px; }
+  .tl-time { flex-shrink: 0; width: 66px; text-align: right; font-size: 12px; color: var(--text-soft); padding-top: 8px; font-variant-numeric: tabular-nums; }
+  .tl-mid { flex-shrink: 0; width: 14px; display: flex; justify-content: center; padding-top: 10px; }
+  .tl-mid i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .tl-mid-task i { background: #4f46e5; box-shadow: 0 0 0 3px var(--primary-soft); }
+  .tl-mid-rest i { background: #0d9488; box-shadow: 0 0 0 3px var(--teal-soft); }
+  .tl-mid-travel i { background: #c7d2fe; }
+  .tl-body { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
+  .tl-name { font-size: 13px; color: var(--text); line-height: 1.5; }
+  .tl-sub { font-size: 11px; color: var(--text-soft); margin-top: 1px; }
+  .tl-seg-rest .tl-body { background: var(--teal-soft); border-color: #99f6e4; }
+  .tl-seg-rest .tl-name { color: var(--teal); }
+  .tl-seg-travel .tl-body { background: transparent; border-color: transparent; padding: 3px 10px; }
+  .tl-seg-travel .tl-name { color: var(--text-soft); font-size: 12px; }
+
+  /* ===== 地图 ===== */
+  #map {
+    height: 360px; border-radius: 16px; border: 1px solid var(--line);
+    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.12);
+  }
+  /* ===== 右侧图表区 ===== */
+  .chart-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .donut-wrap { position: relative; width: 168px; height: 168px; flex-shrink: 0; }
+  .donut { width: 100%; height: 100%; border-radius: 50%; }
+  .donut-hole { position: absolute; inset: 26px; background: #fff; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 0 0 1px #f1f3f9; }
+  .donut-hole b { font-size: 16px; color: var(--text); }
+  .donut-hole span { font-size: 11px; color: var(--text-soft); margin-top: 2px; }
+  .chart-legend { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 8px; }
+  .lg-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-soft); }
+  .lg-row i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+  .lg-row span { margin-left: 2px; }
+  .lg-row b { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; }
+  .subtitle { font-size: 12px; color: var(--text-soft); margin: 0 0 10px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .bar-name { width: 128px; flex-shrink: 0; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { flex: 1; height: 10px; background: #eef0f8; border-radius: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; background: linear-gradient(135deg, #4f46e5, #7c6cf0); }
+  .bar-min { width: 44px; flex-shrink: 0; font-size: 11px; color: var(--text-soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .tl-section { margin-bottom: 16px; }
+  /* ===== 地图标记圆点(高德/Leaflet 通用) ===== */
+  .m-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, #4f46e5, #7c6cf0);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    border: 2px solid #fff; font-size: 13px; font-weight: bold;
+    box-shadow: 0 4px 12px rgba(30, 41, 59, 0.35);
+  }
+  .m-home { background: linear-gradient(135deg, #f59e0b, #fbbf24); }
+  @media (max-width: 560px) {
+    body { padding: 14px 10px calc(14px + env(safe-area-inset-bottom)); }
+    .topbar { margin: 4px 2px 14px; gap: 10px; }
+    .topbar h1 { font-size: 19px; }
+    .topbar p { font-size: 12px; }
+    .logo { width: 44px; height: 44px; font-size: 22px; border-radius: 13px; }
+    .card { padding: 15px; border-radius: 14px; }
+    .set-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .chip { padding: 7px 11px; font-size: 12px; }
+    #input { min-height: 120px; font-size: 15px; }
+    .action-row { flex-wrap: wrap; }
+    .action-row #btn { flex: 1 1 100%; }
+    .action-row #btnClear { flex: 1 1 auto; }
+    .plan-head { padding: 9px 12px; font-size: 12px; gap: 4px 12px; }
+    .stop { gap: 8px; padding: 10px; align-items: flex-start; }
+    .stop-no { width: 24px; height: 24px; font-size: 12px; }
+    .stop-main { font-size: 13.5px; }
+    .stop-time b { font-size: 14px; }
+    .lock-btn { padding: 6px; font-size: 18px; }
+    .act-btn { padding: 7px 12px; font-size: 13px; }
+    #map { height: 280px; }
+    .tl-time { width: 52px; font-size: 11px; }
+    .tl-body { padding: 5px 8px; }
+    .tl-name { font-size: 12.5px; }
+    .donut-wrap { width: 130px; height: 130px; }
+    .donut-hole { inset: 20px; }
+    .bar-name { width: 90px; }
+    .chart-legend { min-width: 0; }
+    .pick-actions #btnPick { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="logo">🗺️</div>
+    <div>
+      <h1>智能行程规划</h1>
+      <p>把今天要做的事丢进来, 自动排好最优顺序</p>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="col-left">
+  <div class="card">
+    <h2>🏠 我的家</h2>
+    <div class="home-row">
+      <input id="homeAddr" class="input" type="text" placeholder="比如&#39;池州市贵池区&#39;或&#39;远东国际花园&#39;, 不用写门牌号">
+      <button id="btnGeo" class="btn btn-sm btn-ghost">🔍 定位</button>
+    </div>
+    <div id="geoMsg" class="geo-msg"></div>
+    <div id="homePick"></div>
+    <p class="hint">📌 写"市+区"或地标名就行; 有多个匹配会列出候选让你自己选, 也可以点地图上的位置微调</p>
+  </div>
+
+  <div class="card">
+    <h2>⚙️ 行程设置</h2>
+    <div class="set-grid">
+      <div class="set-item">
+        <label>出行方式</label>
+        <select id="mode" class="select">
+          <option value="walk">🚶 步行</option>
+          <option value="drive">🚗 驾车</option>
+        </select>
+      </div>
+      <div class="set-item">
+        <label>出发时间</label>
+        <input id="startTime" class="input" type="text" value="08:00">
+      </div>
+      <div class="set-item">
+        <label>起点</label>
+        <input id="startName" class="input" type="text" value="家">
+      </div>
+      <input id="startLat" type="hidden">
+      <input id="startLng" type="hidden">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📝 今天要做什么 <small>每行一条, 支持 明天/后天/周几</small></h2>
+    <textarea id="input" placeholder="明天上午9点去银行办卡&#10;下午3点去学校接孩子放学（重要）&#10;后天顺便去超市买菜&#10;晚上7点前从驿站取快递回家"></textarea>
+    <div class="action-row">
+      <button id="btn" class="btn">🚀 智能排序</button>
+      <button id="btnHistory" class="btn btn-sm btn-ghost" title="翻看以前排过的计划">📜 历史</button>
+      <button id="btnClear" class="btn btn-sm btn-ghost" title="清空自动保存的计划与锁定">🗑 清除记录</button>
+    </div>
+    <div id="result"></div>
+  </div>
+
+  </div>
+    <div class="col-right">
+  <div class="card">
+    <h2>🗺️ 路线地图</h2>
+    <div id="map"></div>
+    <div id="mapMsg" class="geo-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>📊 安排总览</h2>
+    <div id="charts"></div>
+  </div>
+  </div>
+  </div>
+</div>
+
+<!-- ===== 出发前确认弹窗 ===== -->
+<div id="modalMask" class="modal-mask" style="display:none">
+  <div class="modal">
+    <h3>🗺 出发前确认</h3>
+    <p class="modal-tip">排之前先确认这两件事</p>
+    <div class="modal-sec">
+      <div class="modal-label">⏱ 每段路程预留多少时间? <span>(防止踩点)</span></div>
+      <div class="opt-row" id="bufferOpts">
+        <button type="button" data-b="0" class="opt-btn">不预留</button>
+        <button type="button" data-b="5" class="opt-btn">5 分钟</button>
+        <button type="button" data-b="10" class="opt-btn">10 分钟</button>
+        <button type="button" data-b="15" class="opt-btn">15 分钟</button>
+        <button type="button" data-b="20" class="opt-btn">20 分钟</button>
+      </div>
+    </div>
+    <div class="modal-sec">
+      <div class="modal-label">🏠 哪些时间段想回家休息? <span>(可多选, 不勾=在外面待着)</span></div>
+      <div class="opt-row">
+        <label class="ck"><input type="checkbox" data-p="morning"> 上午</label>
+        <label class="ck"><input type="checkbox" data-p="noon"> 中午</label>
+        <label class="ck"><input type="checkbox" data-p="afternoon"> 下午</label>
+        <label class="ck"><input type="checkbox" data-p="evening"> 晚上</label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn btn-ghost btn-sm">取消</button>
+      <button id="modalGo" class="btn btn-sm">✅ 开始规划</button>
+    </div>
+  </div>
+</div>
+<script>
+const btn = document.getElementById('btn');
+const input = document.getElementById('input');
+const resultDiv = document.getElementById('result');
+let map = null;
+let routeLayer = null;
+let homeMarker = null;
+let mapImpl = 'leaflet';   // 当前引擎: 'amap' | 'leaflet'
+let stops = [];
+let lastData = null;
+let dragFrom = null;
+let routeLegs = [];   // 每段(起点->站1->站2...)的真实路程, 对应 stops
+let curMode = 'walk'; // 当前出行方式, 显示'步行/驾车'
+const lockedSet = new Set();
+let lastPlanText = null;   // 最近一次成功规划用的任务文本, 完成/跳过时用它定位要移除的行
+
+// 弹窗里选好的行程偏好(每次点"智能排序"都会先弹窗确认; 默认每段预留10分钟, 四个时段都回家)
+let planOpts = {buffer: 10, prefs: {morning: 'home', noon: 'home', afternoon: 'home', evening: 'home'}};
+const OPTS_KEY = 'route_opts_v1';
+function loadPlanOpts() {
+  try {
+    const s = JSON.parse(localStorage.getItem(OPTS_KEY));
+    if (!s) return;
+    if (s.buffer != null) planOpts.buffer = Number(s.buffer) || 0;
+    if (s.prefs) for (const k of ['morning', 'noon', 'afternoon', 'evening']) planOpts.prefs[k] = s.prefs[k] === 'stay' ? 'stay' : 'home';
+  } catch (e) {}
+}
+function savePlanOpts() {
+  try { localStorage.setItem(OPTS_KEY, JSON.stringify(planOpts)); } catch (e) {}
+}
+
+const HOME_KEY = 'route_home_v1';
+const PLAN_KEY = 'route_plan_v1';
+
+function saveHome() {
+  localStorage.setItem(HOME_KEY, JSON.stringify({
+    name: document.getElementById('startName').value,
+    lat: document.getElementById('startLat').value,
+    lng: document.getElementById('startLng').value
+  }));
+}
+
+// ===== 计划自动保存(刷新页面不丢) =====
+function collectSettings() {
+  return {
+    input: input.value,
+    mode: document.getElementById('mode').value,
+    start_time: document.getElementById('startTime').value,
+    start_name: document.getElementById('startName').value,
+    start_lat: document.getElementById('startLat').value,
+    start_lng: document.getElementById('startLng').value,
+    buffer: planOpts.buffer,
+    home_addr: document.getElementById('homeAddr').value,
+    prefs: planOpts.prefs,
+  };
+}
+
+function savePlanState(data) {
+  try {
+    localStorage.setItem(PLAN_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      settings: collectSettings(),
+      locked: Array.from(lockedSet),
+      data: data
+    }));
+  } catch (e) {}
+}
+
+function clearPlanState() {
+  localStorage.removeItem(PLAN_KEY);
+  lockedSet.clear();
+  lastPlanText = null;
+  lastData = null;
+  stops = [];
+  routeLegs = [];
+  clearRoute();
+  resultDiv.innerHTML = '<p class="hint">🗑 已清除保存的记录, 重新输入再排一次吧。</p>';
+}
+
+function restorePlanState() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(PLAN_KEY)); } catch (e) { return; }
+  if (!saved || !saved.settings) return;
+  const s = saved.settings;
+  input.value = s.input || '';
+  lastPlanText = input.value || null;
+  document.getElementById('mode').value = s.mode || 'walk';
+  document.getElementById('startTime').value = s.start_time || '08:00';
+  document.getElementById('startName').value = s.start_name || '家';
+  document.getElementById('startLat').value = s.start_lat || '';
+  document.getElementById('startLng').value = s.start_lng || '';
+  document.getElementById('homeAddr').value = s.home_addr || '';
+  if (s.buffer != null) planOpts.buffer = Number(s.buffer) || 0;
+  if (s.prefs) {
+    for (const k of ['morning', 'noon', 'afternoon', 'evening']) {
+      planOpts.prefs[k] = s.prefs[k] === 'stay' ? 'stay' : 'home';
+    }
+  }
+  (saved.locked || []).forEach((n) => lockedSet.add(n));
+  const data = saved.data;
+  if (!data || !data.stops) return;
+  lastData = data;
+  routeLegs = data.route_lines || [];
+  curMode = data.mode || 'walk';
+  renderStops(data.stops);
+  renderHead(data);
+  renderVisuals(data);
+  renderMap(data);
+  const msg = document.getElementById('geoMsg');
+  if (msg) { msg.textContent = '♻️ 已恢复上次的计划, 可拖拽调整顺序'; msg.className = 'geo-msg'; }
+}
+
+function loadHome() {
+  const saved = localStorage.getItem(HOME_KEY);
+  if (!saved) return;
+  try {
+    const h = JSON.parse(saved);
+    if (h.lat && h.lng) {
+      document.getElementById('startName').value = h.name || '家';
+      document.getElementById('startLat').value = h.lat;
+      document.getElementById('startLng').value = h.lng;
+      document.getElementById('geoMsg').textContent = '✓ 已恢复上次记录的' + h.name;
+      dropHomeMarker(parseFloat(h.lat), parseFloat(h.lng));
+    }
+  } catch (e) {}
+}
+
+async function locateHome() {
+  const addr = document.getElementById('homeAddr').value.trim();
+  const msg = document.getElementById('geoMsg');
+  const pickBox = document.getElementById('homePick');
+  if (!addr) {
+    msg.textContent = '⚠ 先输入地址';
+    msg.className = 'geo-msg err';
+    return;
+  }
+  msg.textContent = '定位中…';
+  msg.className = 'geo-msg';
+  try {
+    const res = await fetch('/api/geocode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({address: addr})
+    });
+    const data = await res.json();
+    if (data.error) {
+      msg.textContent = '⚠ ' + data.error;
+      msg.className = 'geo-msg err';
+      return;
+    }
+    const cands = data.candidates || [];
+    if (cands.length > 1) {
+      showHomePicker(data, addr, msg, pickBox);
+      return;
+    }
+    applyHome(data.name, data.lat, data.lng, data.source, msg);
+  } catch (e) {
+    msg.textContent = '⚠ 请求失败: ' + e;
+    msg.className = 'geo-msg err';
+  }
+}
+
+function applyHome(name, lat, lng, source, msg) {
+  document.getElementById('startName').value = '家';
+  document.getElementById('startLat').value = lat;
+  document.getElementById('startLng').value = lng;
+  saveHome();
+  const pickBox = document.getElementById('homePick');
+  if (pickBox) pickBox.innerHTML = '';
+  msg.textContent = '✓ ' + (name || '已定位') + (source === 'poi' ? ' (模糊匹配, 可点地图微调)' : '');
+  msg.className = 'geo-msg';
+  dropHomeMarker(parseFloat(lat), parseFloat(lng));
+}
+
+// 家的地址有多个匹配时, 列出候选让用户自己选, 不自动代选
+function showHomePicker(data, addr, msg, pickBox) {
+  const rows = data.candidates.map((c, i) => {
+    const km = (c.distance_m || 0) / 1000;
+    return '<div class="pick-row" data-i="' + i + '">'
+      + '<b>' + c.name + '</b>' + (i === 0 ? '<span class="pick-badge">★ 推荐</span>' : '') + '<br>'
+      + '<span class="hint">' + (c.address || addr) + (km ? ' · ' + km.toFixed(1) + 'km' : '') + '</span>'
+      + '</div>';
+  }).join('');
+  pickBox.innerHTML = '<div class="pick-list" style="margin-top:10px">' + rows + '</div>'
+    + '<div class="pick-actions"><button id="btnHomePick" class="btn btn-sm" disabled>👇 先点一个候选</button>'
+    + ' <button id="btnHomePickCancel" class="btn btn-sm btn-ghost">取消</button></div>';
+  let chosen = null;
+  pickBox.querySelectorAll('.pick-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      chosen = data.candidates[Number(row.dataset.i)];
+      pickBox.querySelectorAll('.pick-row').forEach((r) => r.classList.remove('selected'));
+      row.classList.add('selected');
+      const b = document.getElementById('btnHomePick');
+      b.disabled = false;
+      b.textContent = '✅ 就选这个';
+    });
+  });
+  document.getElementById('btnHomePick').addEventListener('click', () => {
+    if (!chosen) return;
+    msg.textContent = '定位中…';
+    msg.className = 'geo-msg';
+    applyHome(chosen.name, chosen.lat, chosen.lng, 'poi', msg);
+  });
+  document.getElementById('btnHomePickCancel').addEventListener('click', () => {
+    pickBox.innerHTML = '';
+    msg.textContent = '';
+    msg.className = 'geo-msg';
+  });
+}
+
+document.getElementById('btnGeo').addEventListener('click', locateHome);
+document.getElementById('homeAddr').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') locateHome();
+});
+
+let mapReady = false;
+let mapWaiters = [];
+let amapStarted = false;
+let leafletStarted = false;
+let amapInfo = null;
+
+function whenMapReady(fn) {
+  if (mapReady) { fn(); return; }
+  mapWaiters.push(fn);
+}
+
+// 地图下方的状态提示
+function setMapMsg(text) {
+  const el = document.getElementById('mapMsg');
+  if (el) { el.textContent = text; el.className = 'geo-msg'; }
+}
+
+// 动态加载高德 JS API; 没配 Key 或加载失败就返回 false
+function ensureAmap(cb) {
+  if (typeof AMap !== 'undefined') { cb(true); return; }
+  if (!window.AMAP_JS_KEY) { cb(false); return; }
+  if (amapStarted) { setTimeout(() => ensureAmap(cb), 150); return; }
+  amapStarted = true;
+  const sc = document.createElement('script');
+  sc.src = 'https://webapi.amap.com/maps?v=1.4.15&key=' + encodeURIComponent(window.AMAP_JS_KEY);
+  sc.onload = () => cb(true);
+  sc.onerror = () => cb(false);
+  document.head.appendChild(sc);
+}
+
+// 高德 Key 无效时 AMap 不会抛错, 只会在容器里显示错误文案或白屏
+function amapKeyBroken() {
+  const el = document.getElementById('map');
+  if (!el) return false;
+  const t = (el.innerText || el.textContent || '');
+  if (/INVALID_USER_KEY|USERKEY_PLAT_NOMATCH|PLAT_NOMATCH|INVALID_PARAMS|NO_SUCH_KEY|KEY_ERROR|INVALID_KEY/i.test(t)) return true;
+  // 白屏兜底: 过了几秒连图层/画布都没有, 判定失败
+  return !el.querySelector('canvas, img, .amap-layer, .amap-tiles, .amap-maps');
+}
+
+// Leaflet 加载: jsdelivr 不通就换 BootCDN(国内快)
+function initLeaflet() {
+  if (leafletStarted) return;
+  leafletStarted = true;
+  const urls = [
+    'https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+    'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js',
+  ];
+  (function tryNext(i) {
+    if (typeof L !== 'undefined') { createLeafletMap(); return; }
+    if (i >= urls.length) { setMapMsg('⚠ 地图加载失败: 网络不通, 检查网络后刷新'); return; }
+    const sc = document.createElement('script');
+    sc.src = urls[i];
+    sc.onload = () => createLeafletMap();
+    sc.onerror = () => tryNext(i + 1);
+    document.head.appendChild(sc);
+  })(0);
+}
+
+function createLeafletMap() {
+  if (mapReady || mapImpl === 'amap') return;
+  try {
+    map = L.map('map').setView([30.66, 117.49], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
+    map.on('click', (e) => onMapClick(e.latlng.lat, e.latlng.lng));
+    mapImpl = 'leaflet';
+    mapReady = true;
+    setMapMsg('🗺 高德不可用, 已回退 OpenStreetMap');
+    mapWaiters.splice(0).forEach((fn) => fn());
+  } catch (e) {
+    setMapMsg('⚠ 地图初始化失败, 刷新页面重试');
+  }
+}
+
+// 高德优先; 加载失败或 Key 无效, 自动回退 Leaflet
+function initMap() {
+  if (mapReady || amapStarted) return;
+  ensureAmap((ok) => {
+    if (!ok) { initLeaflet(); return; }
+    try {
+      map = new AMap.Map('map', {zoom: 13, resizeEnable: true});
+      mapImpl = 'amap';
+      mapReady = true;
+      map.on('click', (e) => onMapClick(e.lnglat.getLat(), e.lnglat.getLng()));
+      setMapMsg('🗺 高德地图');
+      mapWaiters.splice(0).forEach((fn) => fn());
+      // 5 秒后自查 Key 是否有效, 无效就销毁并回退 Leaflet
+      setTimeout(() => {
+        if (mapImpl !== 'amap' || !mapReady) return;
+        if (amapKeyBroken()) {
+          try { map.destroy(); } catch (e) {}
+          map = null;
+          mapImpl = 'leaflet';
+          mapReady = false;
+          setMapMsg('⚠ 高德 Key 无效(服务平台要选"Web端(JS API)"), 已回退 OpenStreetMap');
+          initLeaflet();
+          redropHomeIfAny();
+          if (lastData) renderMap(lastData);
+        }
+      }, 5000);
+    } catch (e) {
+      map = null;
+      initLeaflet();
+    }
+  });
+}
+
+function redropHomeIfAny() {
+  const lat = document.getElementById('startLat').value;
+  const lng = document.getElementById('startLng').value;
+  if (lat && lng) dropHomeMarker(parseFloat(lat), parseFloat(lng));
+}
+
+function onMapClick(lat, lng) {
+  lat = Number(lat).toFixed(6);
+  lng = Number(lng).toFixed(6);
+  document.getElementById('startName').value = '家';
+  document.getElementById('startLat').value = lat;
+  document.getElementById('startLng').value = lng;
+  saveHome();
+  const msg = document.getElementById('geoMsg');
+  msg.textContent = '✓ 地图选点 (' + lat + ', ' + lng + ')';
+  msg.className = 'geo-msg';
+  dropHomeMarker(lat, lng);
+}
+
+function clearHomeMarker() {
+  if (!homeMarker) return;
+  try {
+    if (mapImpl === 'amap') homeMarker.setMap(null);
+    else homeMarker.remove();
+  } catch (e) {}
+  homeMarker = null;
+}
+
+function dropHomeMarker(lat, lng) {
+  whenMapReady(() => {
+    clearHomeMarker();
+    lat = Number(lat); lng = Number(lng);
+    if (mapImpl === 'amap') {
+      homeMarker = new AMap.Marker({
+        position: [lng, lat],
+        content: '<div class="m-dot m-home">🏠</div>',
+        offset: new AMap.Pixel(-14, -14)
+      });
+      homeMarker.setMap(map);
+      map.setCenter([lng, lat]);
+    } else {
+      homeMarker = L.marker([lat, lng], {icon: pinIcon('家', '#f59e0b')})
+        .addTo(map)
+        .bindPopup('家').openPopup();
+    }
+  });
+}
+// 把分钟数变成'8小时40分' / '42分钟'
+function fmtDur(m) {
+  if (m == null) return '';
+  const hh = Math.floor(m / 60), mm = m % 60;
+  return hh > 0 ? hh + '小时' + mm + '分' : mm + '分钟';
+}
+
+// 把分钟数变成'21:30' / '次日 08:10'
+function fmtClock(m) {
+  if (m == null) return '';
+  const day = Math.floor(m / 1440);
+  const hh = String(Math.floor((m % 1440) / 60)).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  return dayTag(day) + hh + ':' + mm;
+}
+
+// 第几天显示成: '' / '明天 ' / '后天 ' / '第N天 '
+function dayTag(day) {
+  return day === 0 ? '' : (day === 1 ? '明天 ' : (day === 2 ? '后天 ' : '第' + (day + 1) + '天 '));
+}
+
+// 每段的路程说明: '← 从家来 · 3.2km · 步行42分钟'
+function legText(leg) {
+  if (!leg || leg.km == null) return '';
+  const way = curMode === 'drive' ? '驾车' : '步行';
+  return '← 从' + (leg.from.name || '起点') + '来 · ' + leg.km + 'km · ' + way + fmtDur(leg.minutes);
+}
+
+function renderStops(stopList) {
+  stops = stopList.slice();
+  let num = 0;
+  resultDiv.innerHTML = stops.map((s, idx) => {
+    const legLine = legText(routeLegs[idx]);
+    if (s.type === 'base') {
+      const mins = s.depart - s.arrival;
+      const hh = Math.floor(mins / 60);
+      const mm = mins % 60;
+      return '<div class="stop stop-base" data-idx="' + idx + '">'
+        + '<span class="stop-no">休</span>'
+        + '<div class="stop-main"><b>' + s.name + '</b><div class="place">📍 回家休息, 养足精神再出发</div>' + (legLine ? '<div class="leg">' + legLine + '</div>' : '') + '</div>'
+        + '<div class="stop-time"><span class="pri pri-rest">休息</span><b>' + hh + '小时' + mm + '分</b><span class="arrive">放松一下</span></div>'
+        + '</div>';
+    }
+    num += 1;
+    const day = Math.floor(s.arrival / 1440);
+    const hh = String(Math.floor((s.arrival % 1440) / 60)).padStart(2, '0');
+    const mm = String(s.arrival % 60).padStart(2, '0');
+    const dayTag = day === 0 ? '' : (day === 1 ? '明天 ' : (day === 2 ? '后天 ' : '第' + (day + 1) + '天 '));
+    const placeName = (s.place && s.place !== s.name) ? s.place : '';
+    const pri = ['', '低', '中', '高'][s.priority];
+    const priClass = ['', 'pri-1', 'pri-2', 'pri-3'][s.priority];
+    const locked = lockedSet.has(s.name);
+    const acts = (s.src != null && lastPlanText != null)
+      ? '<div class="stop-actions">'
+        + '<button data-done="' + idx + '" class="act-btn" title="已完成: 从计划移除并重新规划">✅ 完成</button>'
+        + '<button data-skip="' + idx + '" class="act-btn" title="跳过: 移到末尾最后再办">⏭ 跳过</button>'
+        + '</div>'
+      : '';
+    return '<div class="stop' + (locked ? ' locked' : '') + '" data-idx="' + idx + '" draggable="' + (!locked) + '">'
+      + '<button data-lock="' + idx + '" class="lock-btn" title="' + (locked ? '点击解锁' : '点击锁定') + '">' + (locked ? '🔒' : '🔓') + '</button>'
+      + '<span class="stop-no">' + num + '</span>'
+      + '<div class="stop-main"><b>' + s.name + '</b>' + (placeName ? '<div class="place">📍 ' + placeName + '</div>' : '') + (legLine ? '<div class="leg">' + legLine + '</div>' : '') + acts + '</div>'
+      + '<div class="stop-time"><span class="pri ' + priClass + '">优先级' + pri + '</span><b>' + dayTag + hh + ':' + mm + '</b><span class="arrive">到达</span></div>'
+      + '</div>';
+  }).join('');
+}
+
+resultDiv.addEventListener('click', (e) => {
+  const actBtn = e.target.closest('button[data-done], button[data-skip]');
+  if (actBtn) {
+    const s = stops[Number(actBtn.dataset.idx)];
+    if (s && s.type === 'task' && s.src != null && lastPlanText != null) {
+      replanRemove(s.src, !!e.target.closest('button[data-skip]'));
+    }
+    return;
+  }
+  const lockBtn = e.target.closest('button[data-lock]');
+  if (!lockBtn) return;
+  const s = stops[Number(lockBtn.dataset.lock)];
+  if (!s || s.type === 'base') return;
+  if (lockedSet.has(s.name)) lockedSet.delete(s.name); else lockedSet.add(s.name);
+  renderStops(stops);
+});
+
+resultDiv.addEventListener('dragstart', (e) => {
+  const el = e.target.closest('.stop');
+  if (!el) return;
+  if (e.target.closest('.stop-actions')) { e.preventDefault(); return; }
+  const s = stops[Number(el.dataset.idx)];
+  if (!s || s.type === 'base' || lockedSet.has(s.name)) { e.preventDefault(); return; }
+  dragFrom = Number(el.dataset.idx);
+  el.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+});
+
+resultDiv.addEventListener('dragover', (e) => {
+  if (dragFrom === null) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+});
+
+resultDiv.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (dragFrom === null) return;
+  const el = e.target.closest('.stop');
+  let to = el ? Number(el.dataset.idx) : stops.length - 1;
+  if (isNaN(to)) to = stops.length - 1;
+  if (dragFrom !== to) {
+    const moved = stops.splice(dragFrom, 1)[0];
+    stops.splice(to, 0, moved);
+  }
+  dragFrom = null;
+  renderStops(stops);
+  if (btn.disabled) return;          // 上一次还在算, 别叠加请求
+  // 拖拽即最终顺序: 全量锁定当前顺序, 让后端重算真实时间/轨迹
+  const locks = [];
+  let pos = 0;
+  stops.forEach((s) => {
+    if (s.type !== 'task') return;
+    locks.push({name: s.name, pos: pos});
+    pos += 1;
+  });
+  runPlan(stopsToPlaces(), locks);
+});
+
+resultDiv.addEventListener('dragend', () => {
+  dragFrom = null;
+  document.querySelectorAll('.stop.dragging').forEach((el) => el.classList.remove('dragging'));
+});
+// 完成/跳过: 从任务文本里移除(或移到末尾)这一行, 再重新规划
+function replanRemove(srcIdx, postpone) {
+  if (lastPlanText == null) return;
+  const lines = lastPlanText.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (srcIdx < 0 || srcIdx >= lines.length) return;
+  const removed = lines.splice(srcIdx, 1)[0];
+  if (postpone) lines.push(removed);
+  const newText = lines.join('\n');
+  input.value = newText;
+  // 保留剩余任务里仍锁定的相对顺序, 位置按剩余任务重算
+  const locks = [];
+  let pos = 0;
+  stops.forEach((s) => {
+    if (s.type !== 'task' || s.src === srcIdx) return;
+    if (lockedSet.has(s.name)) locks.push({name: s.name, pos: pos});
+    pos += 1;
+  });
+  runPlan(stopsToPlaces(), locks, newText);
+}
+
+// 把当前排序结果里的地点原样带回后端, 拖拽重算时不会重新弹候选
+function stopsToPlaces() {
+  const places = {};
+  stops.forEach((s) => {
+    if (s.type === 'task' && s.lat && s.lng) {
+      places[s.name] = {place: s.place || s.name, lat: s.lat, lng: s.lng};
+    }
+  });
+  return places;
+}
+
+async function runPlan(places, forcedLocks, textOverride) {
+  saveHome();
+  const text = (textOverride != null) ? textOverride : input.value;
+  const locks = forcedLocks || [];
+  if (!locks.length) {
+    let pos = 0;
+    stops.forEach((s) => {
+      if (s.type !== 'task') return;
+      if (lockedSet.has(s.name)) locks.push({name: s.name, pos: pos});
+      pos += 1;
+    });
+  }
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '⏳ 正在计算真实路程…';
+  let data = null;
+  try {
+    const res = await fetch('/api/plan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text: text,
+        mode: document.getElementById('mode').value,
+        start_time: document.getElementById('startTime').value,
+        start_name: document.getElementById('startName').value,
+        start_lat: document.getElementById('startLat').value,
+        start_lng: document.getElementById('startLng').value,
+        buffer: planOpts.buffer,
+        home_prefs: planOpts.prefs,
+        locked: locks,
+        places: places || {}
+      })
+    });
+    data = await res.json();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+  if (data.error) {
+    clearCharts();
+    resultDiv.textContent = '⚠ ' + data.error;
+    return;
+  }
+  if (data.need_pick) {
+    showPicker(data.need_pick);
+    return;
+  }
+  lastData = data;
+  routeLegs = data.route_lines || [];
+  curMode = data.mode || 'walk';
+  renderStops(data.stops);
+  renderHead(data);
+  renderVisuals(data);
+  renderMap(data);
+  savePlanState(data);
+  lastPlanText = text;
+}
+
+// 计划头部信息(算法/路网/总览), 计算后和恢复时共用
+function renderHead(data) {
+  const modeText = data.mode === 'drive' ? '🚗 驾车' : '🚶 步行';
+  const methodText = data.method === 'brute-force' ? '暴力枚举' : (data.method ? '启发式(最近邻+2-opt)' : '');
+  let head = '<div class="plan-head"><span>' + modeText + ' · 起点:' + data.start.name + '</span>' + (methodText ? '<span>🧮 算法:' + methodText + '</span>' : '');
+  if (data.route_info) head += '<span>🗺️ ' + data.route_info + '</span>';
+  if (data.filled > 0) head += '<span>📍 自动补全了' + data.filled + '个地点坐标</span>';
+  if (data.locked_count > 0) head += '<span>🔒 已锁定' + data.locked_count + '个</span>';
+  if (data.buffer > 0) head += '<span>⏱ 每段预留' + data.buffer + '分钟余量</span>';
+  if (data.summary) {
+    head += '<span>📏 总路程 ' + data.summary.total_km + 'km</span>';
+    head += '<span>⏱ 总耗时 ' + fmtDur(data.summary.total_minutes) + '</span>';
+    head += '<span>🏁 预计 ' + fmtClock(data.summary.end_min) + ' 结束</span>';
+  }
+  head += '</div>';
+  resultDiv.insertAdjacentHTML('afterbegin', head);
+}
+
+// ===== B4: 纵向时间轴(每段一行: 时间+圆点+内容, 结构上不会重叠) =====
+function fmtDurShort(m) {
+  const hh = Math.floor(m / 60), mm = m % 60;
+  return hh > 0 ? (mm > 0 ? hh + 'h' + mm + 'm' : hh + 'h') : mm + 'm';
+}
+
+function clearCharts() {
+  const box = document.getElementById('charts');
+  if (box) box.innerHTML = '';
+}
+
+// ===== B4.5: 右侧可视化 = 时间轴 + 饼图(时间占比) + 条形图(任务时长) =====
+function renderVisuals(data) {
+  const box = document.getElementById('charts');
+  if (!box) return;
+  box.innerHTML = '';
+  const tl = renderTimeline(data);
+  if (tl) box.insertAdjacentHTML('beforeend', '<div class="tl-section">' + tl + '</div>');
+  box.insertAdjacentHTML('beforeend', statsHTML(data));
+}
+
+function lgRow(color, name, min, pct) {
+  return '<div class="lg-row"><i style="background:' + color + '"></i>' + name
+    + '<span>' + fmtDur(min) + '</span><b>' + pct.toFixed(1) + '%</b></div>';
+}
+
+function statsHTML(data) {
+  const stops = data.stops || [];
+  if (!stops.length) return '';
+  const sum = data.summary || {};
+  const endAbs = sum.end_min;
+  if (endAbs == null) return '';
+  const startAbs = endAbs - (sum.total_minutes || 0);
+  const days = {};
+  stops.forEach((s) => { const d = Math.floor(s.arrival / 1440); (days[d] = days[d] || []).push(s); });
+  const dayList = Object.keys(days).map(Number).sort((a, b) => a - b);
+  let task = 0, travel = 0, rest = 0;
+  dayList.forEach((d, di) => {
+    const dayStops = days[d];
+    let prevEnd = di === 0 ? Math.max(startAbs, d * 1440) : dayStops[0].arrival;
+    dayStops.forEach((s) => {
+      if (s.arrival > prevEnd) travel += s.arrival - prevEnd;
+      if (s.depart > s.arrival) {
+        if (s.type === 'base') rest += s.depart - s.arrival;
+        else task += s.depart - s.arrival;
+      }
+      prevEnd = Math.max(prevEnd, s.depart);
+    });
+  });
+  const total = task + travel + rest;
+  if (!total) return '';
+  const pt = task / total * 100, pv = travel / total * 100;
+  const grad = 'conic-gradient(#4f46e5 0% ' + pt.toFixed(2) + '%, #c7d2fe ' + pt.toFixed(2) + '% '
+    + (pt + pv).toFixed(2) + '%, #0d9488 ' + (pt + pv).toFixed(2) + '% 100%)';
+  const taskRows = stops.filter((s) => s.type !== 'base' && s.depart > s.arrival)
+    .map((s) => ({name: s.name, min: s.depart - s.arrival}))
+    .sort((a, b) => b.min - a.min);
+  const maxMin = taskRows.length ? taskRows[0].min : 1;
+  const bars = taskRows.map((t) =>
+    '<div class="bar-row"><div class="bar-name" title="' + t.name + '">' + t.name + '</div>'
+    + '<div class="bar-track"><div class="bar-fill" style="width:' + (t.min / maxMin * 100).toFixed(1) + '%"></div></div>'
+    + '<div class="bar-min">' + t.min + '分</div></div>').join('');
+  return '<div class="subtitle">⏱ 计划总时长 ' + fmtDur(total) + '</div>'
+    + '<div class="chart-row">'
+    + '<div class="donut-wrap"><div class="donut" style="background:' + grad + '"></div>'
+    + '<div class="donut-hole"><b>' + fmtDurShort(total) + '</b><span>总时长</span></div></div>'
+    + '<div class="chart-legend">'
+    + lgRow('#4f46e5', '任务', task, pt)
+    + lgRow('#c7d2fe', '路程', travel, pv)
+    + lgRow('#0d9488', '回家休息', rest, (rest / total * 100))
+    + '</div></div>'
+    + (bars ? '<div class="subtitle" style="margin-top:14px">⏳ 任务时长排行</div>' + bars : '');
+}
+
+function fmtHM(m) {
+  const hh = String(Math.floor((m % 1440) / 60)).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  return hh + ':' + mm;
+}
+
+function tlSeg(cls, clock, name, sub) {
+  return '<div class="tl-seg ' + cls + '">'
+    + '<div class="tl-time">' + clock + '</div>'
+    + '<div class="tl-mid"><i></i></div>'
+    + '<div class="tl-body"><div class="tl-name">' + name + '</div>'
+    + (sub ? '<div class="tl-sub">' + sub + '</div>' : '')
+    + '</div></div>';
+}
+
+function renderTimeline(data) {
+  const stops = data.stops || [];
+  if (!stops.length) return;
+  const sum = data.summary || {};
+  const endAbs = sum.end_min;
+  if (endAbs == null) return;
+  const startAbs = endAbs - (sum.total_minutes || 0);
+
+  const days = {};
+  stops.forEach((s) => {
+    const d = Math.floor(s.arrival / 1440);
+    (days[d] = days[d] || []).push(s);
+  });
+  const dayList = Object.keys(days).map(Number).sort((a, b) => a - b);
+
+  let html = '<div class="timeline">'
+    + '<div class="tl-head">📅 时间轴 <span class="hint">蓝色=任务 · 青色=回家休息 · 浅紫=路程</span></div>';
+  dayList.forEach((d, di) => {
+    const dayStops = days[d];
+    // 第一天从出发时间开始, 之后每天直接以第一站为起点(夜里在家, 不算路程)
+    const dayStart = di === 0 ? Math.max(startAbs, d * 1440) : dayStops[0].arrival;
+    let prevEnd = dayStart;
+    let segs = '';
+    dayStops.forEach((s) => {
+      if (s.arrival > prevEnd) {
+        segs += tlSeg('tl-seg-travel', fmtHM(prevEnd) + '→' + fmtHM(s.arrival),
+                      '🚶 路程 ' + fmtDur(s.arrival - prevEnd), '');
+      }
+      if (s.depart > s.arrival) {
+        const clock = fmtHM(s.arrival) + '→' + fmtHM(s.depart);
+        if (s.type === 'base') {
+          segs += tlSeg('tl-seg-rest', clock, '🏠 ' + s.name + ' ' + fmtDur(s.depart - s.arrival), '');
+        } else {
+          const sub = (s.place ? '📍 ' + s.place : '') + (s.duration ? ' · 停留' + fmtDur(s.duration) : '');
+          segs += tlSeg('tl-seg-task', clock, s.name, sub);
+        }
+      }
+      prevEnd = Math.max(prevEnd, s.depart);
+    });
+    html += '<div class="tl-day"><div class="tl-day-title">' + (d === 0 ? '今天' : dayTag(d)) + '</div>' + segs + '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+btn.addEventListener('click', openPlanModal);
+
+// ===== 出发前确认弹窗 =====
+const modalMask = document.getElementById('modalMask');
+function openPlanModal() {
+  document.querySelectorAll('#bufferOpts .opt-btn').forEach((b) => {
+    b.classList.toggle('on', Number(b.dataset.b) === planOpts.buffer);
+  });
+  document.querySelectorAll('.ck').forEach((ck) => {
+    const cb = ck.querySelector('input[data-p]');
+    cb.checked = planOpts.prefs[cb.dataset.p] === 'home';
+    ck.classList.toggle('checked', cb.checked);
+  });
+  modalMask.style.display = 'flex';
+}
+function closePlanModal() { modalMask.style.display = 'none'; }
+function confirmPlanModal() {
+  document.querySelectorAll('#bufferOpts .opt-btn').forEach((b) => {
+    if (b.classList.contains('on')) planOpts.buffer = Number(b.dataset.b);
+  });
+  document.querySelectorAll('.ck input[data-p]').forEach((cb) => {
+    planOpts.prefs[cb.dataset.p] = cb.checked ? 'home' : 'stay';
+  });
+  savePlanOpts();
+  closePlanModal();
+  runPlan({});
+}
+document.getElementById('bufferOpts').addEventListener('click', (e) => {
+  const b = e.target.closest('.opt-btn');
+  if (!b) return;
+  document.querySelectorAll('#bufferOpts .opt-btn').forEach((x) => x.classList.remove('on'));
+  b.classList.add('on');
+});
+document.querySelectorAll('.ck input[data-p]').forEach((cb) => {
+  cb.addEventListener('change', () => cb.closest('.ck').classList.toggle('checked', cb.checked));
+});
+document.getElementById('modalGo').addEventListener('click', confirmPlanModal);
+document.getElementById('modalCancel').addEventListener('click', closePlanModal);
+modalMask.addEventListener('click', (e) => { if (e.target === modalMask) closePlanModal(); });
+
+function fmtWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return m + '月' + day + '日 ' + hh + ':' + mm;
+}
+
+// ===== B3: 历史计划翻看/恢复 =====
+async function showHistory() {
+  clearCharts();
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/plans');
+    const data = await res.json();
+    const plans = data.plans || [];
+    if (!plans.length) {
+      resultDiv.innerHTML = '<p class="hint">📭 还没有历史计划, 先排一次试试。</p>';
+      return;
+    }
+    resultDiv.innerHTML = '<h3>📜 历史计划 <small>点一条恢复查看</small></h3>'
+      + plans.map((p) => {
+          const s = p.summary || {};
+          const km = s.total_km != null ? ' · 📏 ' + s.total_km + 'km' : '';
+          const dur = s.total_minutes ? ' · ⏱ ' + fmtDur(s.total_minutes) : '';
+          const end = s.end_min != null ? ' · 🏁 ' + fmtClock(s.end_min) : '';
+          return '<div class="hist-row" data-id="' + p.id + '">'
+            + '<b>#' + p.id + ' · ' + (p.mode === 'drive' ? '🚗 驾车' : '🚶 步行') + ' · 起点:' + p.start_name + '</b>'
+            + '<div class="hint">' + fmtWhen(p.created_at) + km + dur + end + '</div>'
+            + '</div>';
+        }).join('');
+    resultDiv.querySelectorAll('.hist-row').forEach((row) => {
+      row.addEventListener('click', () => restorePlan(Number(row.dataset.id)));
+    });
+  } catch (e) {
+    resultDiv.textContent = '⚠ 读取历史失败: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function restorePlan(planId) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/plans/' + planId);
+    const data = await res.json();
+    if (data.error) {
+      resultDiv.textContent = '⚠ ' + data.error;
+      return;
+    }
+    lastData = data;
+    routeLegs = [];
+    curMode = data.mode || 'walk';
+    renderStops(data.stops);
+    renderHead(data);
+    renderVisuals(data);
+    renderMap(data);
+    // 回填任务文本, 想改就直接在输入框改完再排
+    input.value = (data.stops || [])
+      .filter(s => s.type === 'task')
+      .map(s => s.name).join('\n');
+    lastPlanText = input.value || null;
+    const msg = document.getElementById('geoMsg');
+    if (msg) { msg.textContent = '♻️ 已恢复历史计划 #' + planId; msg.className = 'geo-msg'; }
+  } catch (e) {
+    resultDiv.textContent = '⚠ 恢复失败: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('btnHistory').addEventListener('click', showHistory);
+document.getElementById('btnClear').addEventListener('click', async () => {
+  clearPlanState();
+  try {
+    await fetch('/api/plans', {method: 'DELETE'});
+  } catch (e) {}
+  resultDiv.innerHTML = '<p class="hint">🗑 已清除保存的记录和历史计划, 重新输入再排一次吧。</p>';
+});
+
+function showPicker(needPick) {
+  clearCharts();
+  const picks = {};
+  needPick.forEach((item) => { picks[item.idx] = null; });
+  const blocks = needPick.map((item) => {
+    const rows = item.candidates.map((c, i) => {
+      return '<div class="pick-row" data-idx="' + item.idx + '" data-i="' + i + '">'
+        + '<b>' + c.name + '</b>' + (i === 0 ? '<span class="pick-badge">★ 推荐</span>' : '') + (c.tag ? '<span class="pick-badge">' + c.tag + '</span>' : '') + '<br>'
+        + '<span class="hint">' + c.address + ' · ' + c.km + 'km · 约' + c.minutes + '分钟</span>'
+        + '</div>';
+    }).join('');
+    return '<div class="pick-title">📍 ' + item.name + ' <span class="hint">(按“' + item.keyword + '”搜到, 点一个候选确定地点)</span></div>'
+      + '<div class="pick-list">' + rows + '</div>';
+  }).join('');
+  resultDiv.innerHTML = '<h3>🤔 这些地点需要你确认</h3>' + blocks
+    + '<div class="pick-actions"><button id="btnPick" class="btn">✅ 开始排序</button></div>';
+  resultDiv.querySelectorAll('.pick-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const item = needPick.find((x) => x.idx === Number(row.dataset.idx));
+      const c = item.candidates[Number(row.dataset.i)];
+      picks[item.idx] = c;
+      row.parentElement.querySelectorAll('.pick-row').forEach((r) => r.classList.remove('selected'));
+      row.classList.add('selected');
+    });
+  });
+  document.getElementById('btnPick').addEventListener('click', () => {
+    const places = {};
+    needPick.forEach((item) => {
+      const c = picks[item.idx] || item.candidates[0]; // 没点就默认第一个(推荐)
+      if (c) places[item.name] = {place: c.name, lat: c.lat, lng: c.lng};
+    });
+    runPlan(places);
+  });
+}
+function clearRoute() {
+  if (mapImpl === 'amap') {
+    if (routeLayer && routeLayer.length) { map.remove(routeLayer); routeLayer = null; }
+  } else {
+    if (routeLayer) routeLayer.clearLayers();
+  }
+}
+
+function renderMap(data) {
+  initMap();
+  whenMapReady(() => renderMapNow(data));
+}
+
+function renderMapNow(data) {
+  clearRoute();
+  clearHomeMarker();
+  const start = data.start;
+  const stops = data.stops || [];
+  if (mapImpl === 'amap') {
+    const overlays = [];
+    overlays.push(new AMap.Marker({
+      position: [start.lng, start.lat],
+      content: '<div class="m-dot m-home">🏠</div>',
+      offset: new AMap.Pixel(-14, -14)
+    }));
+    (data.route_lines || []).forEach((seg) => {
+      if (seg.points && seg.points.length > 1) {
+        overlays.push(new AMap.Polyline({
+          path: seg.points.map((p) => [p[1], p[0]]),
+          strokeColor: '#4f46e5', strokeWeight: 5, strokeOpacity: 0.85, lineJoin: 'round'
+        }));
+      } else {
+        overlays.push(new AMap.Polyline({
+          path: [[seg.from.lng, seg.from.lat], [seg.to.lng, seg.to.lat]],
+          strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85, strokeStyle: 'dashed'
+        }));
+      }
+    });
+    let num = 0;
+    stops.forEach((s) => {
+      const label = s.type === 'base' ? '休' : String(++num);
+      const color = s.type === 'base' ? '#0d9488' : '#4f46e5';
+      const m = new AMap.Marker({
+        position: [s.lng, s.lat],
+        content: '<div class="m-dot" style="background:' + color + '">' + label + '</div>',
+        offset: new AMap.Pixel(-14, -14)
+      });
+      m.on('click', () => {
+        if (!amapInfo) amapInfo = new AMap.InfoWindow({offset: new AMap.Pixel(0, -30)});
+        amapInfo.setContent(s.name + (s.place && s.place !== s.name ? ' → ' + s.place : ''));
+        amapInfo.open(map, [s.lng, s.lat]);
+      });
+      overlays.push(m);
+    });
+    map.add(overlays);
+    routeLayer = overlays;
+    map.setFitView(overlays, false, [60, 60, 60, 60]);
+    return;
+  }
+
+  // ---- Leaflet 回退 ----
+  const latlngs = [[start.lat, start.lng]].concat(stops.map(s => [s.lat, s.lng]));
+  if (data.route_lines && data.route_lines.length) {
+    data.route_lines.forEach((seg) => {
+      if (seg.points && seg.points.length > 1) {
+        L.polyline(seg.points, {color: '#4f46e5', weight: 4}).addTo(routeLayer);
+      } else {
+        L.polyline([[seg.from.lat, seg.from.lng], [seg.to.lat, seg.to.lng]],
+          {color: '#4f46e5', weight: 4, dashArray: '5 7'}).addTo(routeLayer);
+      }
+    });
+  } else {
+    L.polyline(latlngs, {color: '#4f46e5', weight: 4}).addTo(routeLayer);
+  }
+  L.marker([start.lat, start.lng], {icon: pinIcon('起', '#10b981')}).addTo(routeLayer);
+  let num = 0;
+  stops.forEach((s) => {
+    const label = s.type === 'base' ? '休' : String(++num);
+    const color = s.type === 'base' ? '#0d9488' : '#4f46e5';
+    L.marker([s.lat, s.lng], {icon: pinIcon(label, color)})
+      .addTo(routeLayer)
+      .bindPopup(s.name + (s.place && s.place !== s.name ? ' → ' + s.place : ''));
+  });
+  const bounds = L.latLngBounds(latlngs);
+  map.fitBounds(bounds, {padding: [30, 30]});
+}
+
+function pinIcon(label, color) {
+  return L.divIcon({
+    html: '<div style="width:26px;height:26px;border-radius:50%;background:' + color + ';color:#fff;display:flex;align-items:center;justify-content:center;border:2px solid #fff;font-size:12px;font-weight:bold">' + label + '</div>',
+    className: '',
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
+  });
+}
+
+loadPlanOpts();
+initMap();
+loadHome();
+restorePlanState();
+
+// PWA: 可添加到主屏幕 + 离线打开外壳(localhost/127.0.0.1 或 https 下生效, 失败不影响使用)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>

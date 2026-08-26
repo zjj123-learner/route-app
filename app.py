@@ -1,12 +1,15 @@
 import json
 from flask import Flask, render_template, request, jsonify
-from parser import parse_tasks
+from llm_parser import parse_with_llm
+import config
 from optimizer import optimize_route, insert_base_stops, DEFAULTS, haversine_km
 from geocode import resolve_address, fill_missing_coords, search_nearby, search_candidates, extract_keyword
 from config import (DEFAULT_START, HOST, PORT, DEBUG,
                     AMAP_JS_KEY, AMAP_JS_SECURITY_CODE)
 import route
 import db
+from simanneal import sa_route
+from genetic import ga_route
 
 app = Flask(__name__)
 db.init_db()   # 启动时确保表存在
@@ -63,7 +66,7 @@ def plan():
         v = raw_prefs.get(k)
         prefs[k] = v if v in valid_prefs else "home"
 
-    tasks = parse_tasks(text)
+    tasks = parse_with_llm(text, prefer_llm=config.LLM_PARSER)
     if not tasks:
         return jsonify({"error": "没有解析出任务"}), 400
 
@@ -189,45 +192,65 @@ def plan():
     route_info = ("真实路网时间 %d/%d 对" % (route_real, route_total) if route_real
                   else "直线估算(高德路径规划不可用, 已自动降级)")
 
-    result = optimize_route(tasks, start, options, fixed_positions=fixed_positions or None)
-    all_stops = insert_base_stops(result["arrivals"], start, options, prefs=prefs)
-    stops = []
-    for s in all_stops:
-        task = s["task"]
-        stops.append({
-            "type": s["type"],
-            "name": task["name"],
-            "place": task["place"],
-            "lat": task["lat"],
-            "lng": task["lng"],
-            "priority": task["priority"],
-            "duration": task["duration"],
-            "arrival": s["arrival"],
-            "depart": s["depart"],
-            "day": task.get("day", 0),
-            "src": task.get("src"),
-        })
+    # 三个算法各出一条路线(复用同一张路网矩阵, 不重复请求高德)
+    base_result = optimize_route(tasks, start, options, fixed_positions=fixed_positions or None)
+    route_results = {
+        "heuristic": base_result,
+        "simanneal": sa_route(tasks, start, options, fixed_positions=fixed_positions or None, seed=20260826),
+        "genetic": ga_route(tasks, start, options, fixed_positions=fixed_positions or None, seed=20260826),
+    }
 
-    # 把相邻两站的真实轨迹坐标取出来, 给前端画真实路线(没有轨迹就 None, 前端画虚线)
-    seq = [start] + stops
-    route_lines = []
-    for i in range(len(seq) - 1):
-        a, b = seq[i], seq[i + 1]
-        key = (round(a["lat"], 5), round(a["lng"], 5), round(b["lat"], 5), round(b["lng"], 5))
-        val = time_matrix.get(key)
-        route_lines.append({
-            "from": {"name": a["name"], "lat": a["lat"], "lng": a["lng"]},
-            "to": {"name": b["name"], "lat": b["lat"], "lng": b["lng"]},
-            "points": val[2] if val else None,
-            "km": val[0] if val else None,
-            "minutes": val[1] if val else None,
-        })
-    # 计划总览: 总路程(含往返家)/总耗时/预计结束时间
-    summary = {"total_km": 0.0, "total_minutes": 0, "end_min": None}
-    if stops:
-        summary["total_km"] = round(sum((leg["km"] or 0) for leg in route_lines), 1)
-        summary["end_min"] = stops[-1]["depart"]
-        summary["total_minutes"] = stops[-1]["depart"] - options["start_min"]
+    def _payload(rr):
+        all_stops = insert_base_stops(rr["arrivals"], start, options, prefs=prefs)
+        st = []
+        for s in all_stops:
+            task = s["task"]
+            st.append({
+                "type": s["type"],
+                "name": task["name"],
+                "place": task["place"],
+                "lat": task["lat"],
+                "lng": task["lng"],
+                "priority": task["priority"],
+                "duration": task["duration"],
+                "arrival": s["arrival"],
+                "depart": s["depart"],
+                "day": task.get("day", 0),
+                "src": task.get("src"),
+            })
+        seq = [start] + st
+        lines = []
+        for i in range(len(seq) - 1):
+            a, b = seq[i], seq[i + 1]
+            key = (round(a["lat"], 5), round(a["lng"], 5), round(b["lat"], 5), round(b["lng"], 5))
+            val = time_matrix.get(key)
+            lines.append({
+                "from": {"name": a["name"], "lat": a["lat"], "lng": a["lng"]},
+                "to": {"name": b["name"], "lat": b["lat"], "lng": b["lng"]},
+                "points": val[2] if val else None,
+                "km": val[0] if val else None,
+                "minutes": val[1] if val else None,
+            })
+        summary = {"total_km": 0.0, "total_minutes": 0, "end_min": None}
+        if st:
+            summary["total_km"] = round(sum((leg["km"] or 0) for leg in lines), 1)
+            summary["end_min"] = st[-1]["depart"]
+            summary["total_minutes"] = st[-1]["depart"] - options["start_min"]
+        return {
+            "stops": st,
+            "route_lines": lines,
+            "summary": summary,
+            "stats": rr["stats"],
+            "method": rr["method"],
+        }
+
+    payloads = {k: _payload(rr) for k, rr in route_results.items()}
+    best_key = min(payloads, key=lambda k: payloads[k]["stats"]["total"])
+    best_payload = payloads[best_key]
+    stops = best_payload["stops"]
+    route_lines = best_payload["route_lines"]
+    summary = best_payload["summary"]
+    result = route_results[best_key]
 
     # 记住这次实际用到的地点, 下次'去银行'直接补坐标
     for t in tasks:
@@ -254,6 +277,8 @@ def plan():
         "route_info": route_info,
         "route_lines": route_lines,
         "method": result["method"],
+        "all_routes": payloads,
+        "best": best_key,
         "home_prefs": prefs,
         "locked_count": len(fixed_positions),
         "buffer": options["buffer"],

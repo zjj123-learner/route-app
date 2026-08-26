@@ -759,6 +759,12 @@ def test_plan_api_route_lines():
             base_stops = [s for s in data.get("stops") or [] if s["type"] == "base"]
             if base_stops:
                 check(all(s.get("src") is None for s in base_stops), "e2e: 回家休息不带src")
+            routes = data.get("all_routes") or {}
+            check(set(routes) == {"heuristic", "simanneal", "genetic"}, "e2e: all_routes 含三个算法")
+            check(data.get("best") in routes, "e2e: best 标记存在")
+            check(routes[data["best"]]["stops"] == data.get("stops"), "e2e: 默认展示最优路线")
+            check(all(r.get("route_lines") and r.get("summary") and r.get("stats") for r in routes.values()),
+                  "e2e: 每条路线都有轨迹/汇总/统计")
     finally:
         route.clear_cache()
 
@@ -792,6 +798,98 @@ def test_simanneal():
     check([t["name"] for t in a] == [t["name"] for t in b], "退火: 同 seed 结果可复现")
 
 
+def test_llm_parser():
+    import config as cfg
+    import llm_parser as lp
+
+    class _FakeLLMResp:
+        def __init__(self, content):
+            self._c = content
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._c}}]}
+
+    # 1) 没配 key: 不可用, 返回 None
+    with mock.patch.object(cfg, "LLM_API_KEY", ""), mock.patch.object(cfg, "LLM_BASE_URL", ""):
+        check(not lp.llm_available(), "llm: 没 key 不可用")
+        check(lp.llm_parse_line("明天上午9点去银行办卡") is None, "llm: 没 key 返回 None")
+
+    # 2) 配 key + mock 响应: 正常解析, 时间抬成绝对分钟
+    payload = '```json\n{"day":1,"earliest_min":540,"latest_min":720,"fixed_min":null,"deadline_min":null,"priority":2,"duration_min":30,"place":"银行"}\n```'
+    with mock.patch.object(cfg, "LLM_API_KEY", "sk-test"), \
+         mock.patch.object(cfg, "LLM_BASE_URL", "https://api.deepseek.com/v1"), \
+         mock.patch.object(cfg, "LLM_MODEL", "deepseek-chat"), \
+         mock.patch.object(lp.requests, "post", return_value=_FakeLLMResp(payload)):
+        check(lp.llm_available(), "llm: 有 key 可用")
+        t = lp.llm_parse_line("明天上午9点去银行办卡")
+        check(t is not None, "llm: 解析成功")
+        check(t["day"] == 1 and t["earliest"] == 1980 and t["latest"] == 2160, "llm: 明天9点=第1天1980")
+        check(t["place"] == "银行" and t["priority"] == 2 and t["duration"] == 30, "llm: 字段正确")
+
+    # 3) 返回非 JSON 内容 -> None(上层回退规则)
+    with mock.patch.object(cfg, "LLM_API_KEY", "sk-test"), \
+         mock.patch.object(cfg, "LLM_BASE_URL", "https://api.deepseek.com/v1"), \
+         mock.patch.object(lp.requests, "post", return_value=_FakeLLMResp("抱歉我不懂")):
+        check(lp.llm_parse_line("随便写写") is None, "llm: 非JSON内容返回 None")
+
+    # 4) parse_with_llm: prefer_llm 但 LLM 失败时回退规则
+    with mock.patch.object(cfg, "LLM_API_KEY", "sk-test"), \
+         mock.patch.object(cfg, "LLM_BASE_URL", "https://api.deepseek.com/v1"), \
+         mock.patch.object(lp.requests, "post", return_value=_FakeLLMResp("抱歉我不懂")):
+        tasks = lp.parse_with_llm("明天上午9点去银行办卡", prefer_llm=True)
+        check(len(tasks) == 1 and tasks[0]["day"] == 1 and tasks[0]["earliest"] == 1980,
+              "llm: 失败回退规则解析")
+
+
+
+def test_genetic():
+    from optimizer import nearest_neighbor, evaluate_order, DEFAULTS
+    from genetic import ga_route
+    demo = """上午9点去银行办卡
+下午3点去学校接孩子放学（重要）
+顺便去超市买菜
+晚上7点前从驿站取快递回家"""
+    tasks = parse_tasks(demo)
+    start = {"name": "家", "lat": 31.235, "lng": 121.47}
+    opts = {"mode": "walk"}
+    for i, t in enumerate(tasks):
+        t["lat"] = 31.23 + i * 0.01
+        t["lng"] = 121.47 + i * 0.01
+    g = ga_route(tasks, start, dict(opts), seed=42)
+    nn_opts = dict(DEFAULTS)
+    nn_opts.update(opts)
+    nn_total = evaluate_order(nearest_neighbor(tasks, start, nn_opts), start, nn_opts)["total"]
+    check(g["method"] == "genetic", "遗传: method 标记 genetic")
+    check(g["stats"]["total"] <= nn_total, "遗传: 种群含最近邻, 至少不差于最近邻")
+    check(len(g["order"]) == len(tasks), "遗传: 任务不丢不重")
+    check(sorted(t["name"] for t in g["order"]) == sorted(t["name"] for t in tasks), "遗传: 任务集合一致")
+    fixed = {0: 2, 3: 0}
+    g2 = ga_route(tasks, start, dict(opts), fixed_positions=fixed, seed=7)
+    check(g2["order"][0] is tasks[3] and g2["order"][2] is tasks[0], "遗传: 锁定位置生效")
+    empty = ga_route([], start, dict(opts))
+    check(empty["order"] == [] and empty["stats"] is None, "遗传: 空任务安全返回")
+    a = ga_route(tasks, start, dict(opts), seed=99)["order"]
+    b = ga_route(tasks, start, dict(opts), seed=99)["order"]
+    check([t["name"] for t in a] == [t["name"] for t in b], "遗传: 同 seed 结果可复现")
+
+def test_corpus():
+    from corpus import ENTRIES
+    from benchmark_llm import run_rule
+
+    check(len(ENTRIES) == 50, "语料: 50 条")
+    need = {"text", "day", "earliest", "latest", "fixed", "deadline", "priority", "duration", "place"}
+    check(all(need <= set(e) for e in ENTRIES), "语料: 字段齐全")
+    rule = run_rule(ENTRIES)
+    ok = sum(1 for r in rule if r[1])
+    check(ok >= 35, "语料: 规则基线全对 %d/50(>=35)" % ok)
+    by_text = {r[0]: r[1] for r in rule}
+    check(not by_text.get("顺路去趟药店买药", True), "语料: 规则翻车-顺路优先级")
+    check(not by_text.get("明天上午十点去药房买药", True), "语料: 规则翻车-药房地点")
+
+
 if __name__ == "__main__":
     test_parser()
     test_optimizer()
@@ -814,7 +912,10 @@ if __name__ == "__main__":
     test_route_fail_retry()
     test_plan_api_route_lines()
     test_plans_api()
+    test_llm_parser()
+    test_corpus()
     test_simanneal()
+    test_genetic()
     print(f"\n共 {passed + failures} 项, 通过 {passed}, 失败 {failures}")
     if failures:
         exit(1)

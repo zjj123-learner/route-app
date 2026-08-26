@@ -14,6 +14,7 @@ import sys
 
 from optimizer import optimize_route
 from simanneal import sa_route
+from genetic import ga_route
 
 HOME = {"name": "家", "lat": 31.23, "lng": 121.47}
 SEED = 20260825
@@ -62,7 +63,8 @@ def run_one(n, rng, opts):
         brute = optimize_route(tasks, HOME, dict(opts))["stats"]["total"]
     h = optimize_route(tasks, HOME, {**opts, "max_brute_force": 0})["stats"]["total"]
     s = sa_route(tasks, HOME, dict(opts), seed=n * 100 + 7)["stats"]["total"]
-    return brute, h, s
+    g = ga_route(tasks, HOME, dict(opts), seed=n * 100 + 7)["stats"]["total"]
+    return brute, h, s, g
 
 
 def pct(better, base):
@@ -80,30 +82,33 @@ def main():
 
     rng = random.Random(SEED)
     opts = {"mode": "walk"}
-    print("规模 实例 暴力最优 启发式 模拟退火 启发式差距% 退火差距%")
-    h_gaps, s_gaps = [], []
-    big_h_wins = big_s_wins = big_tie = 0
+    print("规模 实例 暴力最优 启发式 模拟退火 遗传 启发式差距% 退火差距% 遗传差距%")
+    h_gaps, s_gaps, g_gaps = [], [], []
+    big_wins = {"heuristic": 0, "simanneal": 0, "genetic": 0, "tie": 0}
     for n in sizes:
         for k in range(inst):
-            brute, h, s = run_one(n, rng, opts)
+            brute, h, s, g = run_one(n, rng, opts)
             if brute is not None:
-                hg, sg = pct(h, brute), pct(s, brute)
+                hg, sg, gg = pct(h, brute), pct(s, brute), pct(g, brute)
                 h_gaps.append(hg)
                 s_gaps.append(sg)
-                print("%d   %d   %d   %d   %d   %.2f%%   %.2f%%" % (n, k + 1, brute, h, s, hg, sg))
+                g_gaps.append(gg)
+                print("%d   %d   %d   %d   %d   %d   %.2f%%   %.2f%%   %.2f%%" % (n, k + 1, brute, h, s, g, hg, sg, gg))
             else:
-                if s < h:
-                    big_s_wins += 1
-                elif h < s:
-                    big_h_wins += 1
+                best_val = min(h, s, g)
+                who = [k for k, v in (("heuristic", h), ("simanneal", s), ("genetic", g)) if v == best_val]
+                if len(who) == 1:
+                    big_wins[who[0]] += 1
                 else:
-                    big_tie += 1
-                print("%d   %d   -   %d   %d   -   -" % (n, k + 1, h, s))
+                    big_wins["tie"] += 1
+                print("%d   %d   -   %d   %d   %d   -   -   -" % (n, k + 1, h, s, g))
 
     print("\n=== 汇总 ===")
     if h_gaps:
-        print("离暴力最优平均差距: 启发式 %.2f%%  模拟退火 %.2f%%" % (sum(h_gaps) / len(h_gaps), sum(s_gaps) / len(s_gaps)))
-    print("大规模(9+任务): 退火更优 %d 次 / 启发式更优 %d 次 / 打平 %d 次" % (big_s_wins, big_h_wins, big_tie))
+        print("离暴力最优平均差距: 启发式 %.2f%%  模拟退火 %.2f%%  遗传 %.2f%%" % (
+            sum(h_gaps) / len(h_gaps), sum(s_gaps) / len(s_gaps), sum(g_gaps) / len(g_gaps)))
+    print("大规模(9+任务)谁最优: 启发式 %d 次 / 模拟退火 %d 次 / 遗传 %d 次 / 打平 %d 次" % (
+        big_wins["heuristic"], big_wins["simanneal"], big_wins["genetic"], big_wins["tie"]))
 
 
 if __name__ == "__main__":

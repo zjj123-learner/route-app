@@ -38,8 +38,9 @@ HOST = _env("HOST") or "0.0.0.0"      # 0.0.0.0 = 允许手机等局域网设备
 PORT = int(_env("PORT") or 5000)
 DEBUG = _env("FLASK_DEBUG") == "1"    # 默认关 debug(生产安全); 开发时 set FLASK_DEBUG=1
 
-# LLM 解析(可选, 后续步骤接入): 不配 LLM_API_KEY 就继续用规则解析
-LLM_API_KEY = _env("LLM_API_KEY") or ""
-LLM_BASE_URL = _env("LLM_BASE_URL") or "https://api.openai.com/v1"
-LLM_MODEL = _env("LLM_MODEL") or "gpt-4o-mini"
+# LLM 解析(可选后端): 不配 LLM_API_KEY 就继续用规则解析.
+# DeepSeek 示例: LLM_BASE_URL=https://api.deepseek.com/v1, LLM_MODEL=deepseek-chat
+LLM_API_KEY = _env("DEEPSEEK_API_KEY") or ""
+LLM_BASE_URL = _env("LLM_BASE_URL") or "https://api.deepseek.com/v1"
+LLM_MODEL = _env("LLM_MODEL") or "deepseek-v4-flash"
 LLM_PARSER = _env("LLM_PARSER") == "1"  # 显式设 1 才用 LLM 解析

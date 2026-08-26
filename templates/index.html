@@ -155,6 +155,17 @@
   /* ===== 结果列表 ===== */
   #result { margin-top: 18px; }
   #result h3 { margin: 0 0 6px; font-size: 16px; }
+.route-tabs { display: flex; gap: 8px; margin: 10px 0 6px; flex-wrap: wrap; }
+.route-tab {
+  flex: 1; min-width: 88px; border: 1.5px solid #e2e8f0; background: #fff;
+  border-radius: 12px; padding: 8px 10px; cursor: pointer; text-align: center;
+  transition: all .15s;
+}
+.route-tab b { display: block; font-size: 15px; color: #1e293b; margin-bottom: 2px; }
+.route-tab small { color: #94a3b8; font-size: 12px; }
+.route-tab.on { border-color: #4f46e5; background: #eef2ff; }
+.route-tab.on b { color: #4f46e5; }
+.route-same { width: 100%; text-align: center; font-size: 12px; color: #0d9488; }
   .plan-head {
     display: flex; flex-wrap: wrap; gap: 6px 16px;
     font-size: 13px; color: var(--text-soft);
@@ -471,6 +482,8 @@ let routeLegs = [];   // 每段(起点->站1->站2...)的真实路程, 对应 st
 let curMode = 'walk'; // 当前出行方式, 显示'步行/驾车'
 const lockedSet = new Set();
 let lastPlanText = null;   // 最近一次成功规划用的任务文本, 完成/跳过时用它定位要移除的行
+let allRoutes = null;        // 三个算法的完整结果 {heuristic/simanneal/genetic: {...}}
+let activeRoute = null;      // 当前显示的算法 key
 
 // 弹窗里选好的行程偏好(每次点"智能排序"都会先弹窗确认; 默认每段预留10分钟, 四个时段都回家)
 let planOpts = {buffer: 10, prefs: {morning: 'home', noon: 'home', afternoon: 'home', evening: 'home'}};
@@ -894,6 +907,8 @@ function renderStops(stopList) {
 }
 
 resultDiv.addEventListener('click', (e) => {
+  const tab = e.target.closest('.route-tab');
+  if (tab) { switchRoute(tab.dataset.route); return; }
   const actBtn = e.target.closest('button[data-done], button[data-skip]');
   if (actBtn) {
     const s = stops[Number(actBtn.dataset.idx)];
@@ -1037,6 +1052,7 @@ async function runPlan(places, forcedLocks, textOverride) {
   routeLegs = data.route_lines || [];
   curMode = data.mode || 'walk';
   renderStops(data.stops);
+  renderRouteTabs(data);
   renderHead(data);
   renderVisuals(data);
   renderMap(data);
@@ -1044,10 +1060,59 @@ async function runPlan(places, forcedLocks, textOverride) {
   lastPlanText = text;
 }
 
+// ===== 三算法切换: 推荐一(启发式) / 推荐二(模拟退火) / 推荐三(遗传) =====
+const ROUTE_KEYS = ['heuristic', 'simanneal', 'genetic'];
+
+function routeLabel(key) {
+  return key === 'heuristic' ? '推荐一' : (key === 'simanneal' ? '推荐二' : '推荐三');
+}
+
+function renderRouteTabs(data, activeKey) {
+  const keys = ROUTE_KEYS.filter((k) => data.all_routes && data.all_routes[k]);
+  if (!keys.length) { allRoutes = null; activeRoute = null; return; }
+  allRoutes = data.all_routes;
+  activeRoute = activeKey || data.best || keys[0];
+  const totals = keys.map((k) => (allRoutes[k].summary || {}).total_minutes || 0);
+  const same = totals.every((v) => v === totals[0]);
+  const bestMethod = (allRoutes[data.best] || {}).method;
+  const hint = same ? (bestMethod === 'brute-force' ? '⚡ 三个算法结果一致, 已是最优' : '⚡ 三个算法结果一致') : '';
+  const tabs = keys.map((k) => {
+    const r = allRoutes[k];
+    const on = k === activeRoute ? ' on' : '';
+    const star = k === data.best ? ' ⭐' : '';
+    return '<div class="route-tab' + on + '" data-route="' + k + '" title="点击切换推荐路线">'
+      + '<b>' + routeLabel(k) + star + '</b>'
+      + '<small>' + fmtDur((r.summary || {}).total_minutes) + '</small>'
+      + '</div>';
+  }).join('');
+  resultDiv.insertAdjacentHTML('afterbegin', '<div class="route-tabs">' + tabs + (hint ? '<div class="route-same">' + hint + '</div>' : '') + '</div>');
+}
+
+function switchRoute(key) {
+  if (!allRoutes || !allRoutes[key] || key === activeRoute) return;
+  const r = allRoutes[key];
+  const data = Object.assign({}, lastData, {
+    stops: r.stops,
+    route_lines: r.route_lines,
+    summary: r.summary,
+    stats: r.stats,
+    method: r.method,
+  });
+  routeLegs = data.route_lines || [];
+  renderStops(data.stops);
+  renderRouteTabs(data, key);
+  renderHead(data);
+  renderVisuals(data);
+  renderMap(data);
+}
+
 // 计划头部信息(算法/路网/总览), 计算后和恢复时共用
 function renderHead(data) {
   const modeText = data.mode === 'drive' ? '🚗 驾车' : '🚶 步行';
-  const methodText = data.method === 'brute-force' ? '暴力枚举' : (data.method ? '启发式(最近邻+2-opt)' : '');
+  const methodText = data.method === 'brute-force' ? '暴力枚举(最优)'
+    : data.method === 'simanneal' ? '模拟退火'
+    : data.method === 'genetic' ? '遗传算法'
+    : (data.method ? '启发式(最近邻+2-opt)' : '');
   let head = '<div class="plan-head"><span>' + modeText + ' · 起点:' + data.start.name + '</span>' + (methodText ? '<span>🧮 算法:' + methodText + '</span>' : '');
   if (data.route_info) head += '<span>🗺️ ' + data.route_info + '</span>';
   if (data.filled > 0) head += '<span>📍 自动补全了' + data.filled + '个地点坐标</span>';

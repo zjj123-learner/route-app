@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
-"""评测: 规则解析 vs LLM 解析 (50 条人工标注语料)
+"""评测: 规则解析 vs LLM 解析 (50 条训练语料 + 15 条泛化集)
 
 用法:
-  python benchmark_llm.py              有 LLM key 就跑全量对比
+  python benchmark_llm.py              有 LLM key 就跑全量对比(训练集 50 条)
+  python benchmark_llm.py --gen        跑泛化集 15 条(不在语料里的新表达, 测泛化)
   python benchmark_llm.py --rule       只跑规则基线(没配 key 时默认只跑规则)
   python benchmark_llm.py --limit 10   只跑前 10 条(调试用)
 
 规则解析完全离线; LLM 解析需要 config.py 里配好:
-  set LLM_API_KEY=sk-xxx
+  set DEEPSEEK_API_KEY=sk-xxx
   set LLM_BASE_URL=https://api.deepseek.com/v1
-  set LLM_MODEL=deepseek-chat
+  set LLM_MODEL=deepseek-v4-flash
+
+实验设计: 规则解析是固定对照组(不调优), 调优只针对 LLM 路径(prompt + 规范化).
+训练集 50 条看"背题能力", 泛化集 15 条看"泛化能力"——后者更能说明 LLM 的价值.
 """
 import sys
 
-from corpus import ENTRIES
+from corpus import ENTRIES, GEN_ENTRIES
 from parser import parse_line
 from llm_parser import llm_parse_line, llm_available
 
@@ -85,11 +89,16 @@ def print_misses(results, label, n=8):
 
 def main():
     args = sys.argv[1:]
+    use_gen = "--gen" in args
+    entries = GEN_ENTRIES if use_gen else ENTRIES
     limit = None
     if "--limit" in args:
         limit = int(args[args.index("--limit") + 1])
-    entries = ENTRIES[:limit] if limit else ENTRIES
-    print("语料共 %d 条\n" % len(entries))
+    entries = entries[:limit] if limit else entries
+    if use_gen:
+        print("泛化集共 %d 条(不在训练语料里, 测没见过的新表达)\n" % len(entries))
+    else:
+        print("语料共 %d 条\n" % len(entries))
 
     rule = run_rule(entries)
     print_summary(rule, "规则解析")
@@ -97,7 +106,8 @@ def main():
 
     if "--rule" in args or not llm_available():
         if not llm_available():
-            print("\n[未配置 LLM_API_KEY, 跳过 LLM 对比。配好环境变量后重跑即可。]")
+            print("规则解析是固定对照组(不调优); 调优只针对 LLM 路径(prompt + 规范化).")
+            print("\n[未配置 DEEPSEEK_API_KEY/LLM_API_KEY, 跳过 LLM 对比。配好环境变量后重跑即可。]")
         return
 
     print()

@@ -799,6 +799,7 @@ def test_simanneal():
 
 
 def test_llm_parser():
+    test_llm_normalize()
     import config as cfg
     import llm_parser as lp
 
@@ -845,6 +846,75 @@ def test_llm_parser():
 
 
 
+def test_llm_normalize():
+    """LLM 输出规范化(离线回归): 覆盖上次评测 19 条 miss 的代表性类型.
+    直接测 _normalize, 不依赖网络/模型, 保证后处理逻辑正确."""
+    import llm_parser as lp
+
+    def norm(raw, text):
+        return lp._normalize(text, raw)
+
+    # 1) 建设银行 -> 银行, 取钱时长 20 -> 30
+    t = norm({"day": 1, "earliest_min": 540, "latest_min": 720, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 20, "place": "建设银行"},
+             "明天上午9点去建设银行取钱")
+    check(t["place"] == "银行" and t["duration"] == 30, "llm规范: 建设银行->银行, 取钱30")
+
+    # 2) 驿站 -> 快递驿站(截止时间保留)
+    t = norm({"day": 0, "earliest_min": None, "latest_min": None, "fixed_min": None,
+              "deadline_min": 1140, "priority": 2, "duration_min": 20, "place": "驿站"},
+             "晚上7点前从驿站取快递回家")
+    check(t["place"] == "快递驿站" and t["deadline"] == 1140, "llm规范: 驿站->快递驿站")
+
+    # 3) 取快递被误判成固定预约 -> 改回时间窗 720-900
+    t = norm({"day": 1, "earliest_min": None, "latest_min": None, "fixed_min": 720,
+              "deadline_min": None, "priority": 2, "duration_min": 20, "place": "快递驿站"},
+             "明天中午十二点去取快递")
+    check(t["fixed"] is None and t["earliest"] == 2160 and t["latest"] == 2340,
+          "llm规范: 取快递不算预约, 转时间窗")
+
+    # 4) 药房 -> 药店
+    t = norm({"day": 1, "earliest_min": 600, "latest_min": 780, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 20, "place": "药房"},
+             "明天上午十点去药房买药")
+    check(t["place"] == "药店", "llm规范: 药房->药店")
+
+    # 5) latest 允许 1440(24:00), 不再被夹掉
+    t = norm({"day": 0, "earliest_min": 1080, "latest_min": 1440, "fixed_min": None,
+              "deadline_min": None, "priority": 1, "duration_min": 30, "place": "健身房"},
+             "晚上有空去健身房")
+    check(t["latest"] == 1440, "llm规范: latest=1440 保留")
+
+    # 6) 接孩子没写地点 -> 学校
+    t = norm({"day": 0, "earliest_min": None, "latest_min": None, "fixed_min": 1020,
+              "deadline_min": None, "priority": 3, "duration_min": 30, "place": None},
+             "下午五点去接孩子放学（重要）")
+    check(t["place"] == "学校" and t["fixed"] == 1020, "llm规范: 接孩子->学校")
+
+    # 7) 模糊时段窗口覆盖: 明天下午 = 720-1080(抬到第1天)
+    t = norm({"day": 1, "earliest_min": 720, "latest_min": None, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 60, "place": "医院"},
+             "明天下午去医院看病")
+    check(t["earliest"] == 2160 and t["latest"] == 2520, "llm规范: 下午窗口=720-1080")
+
+    # 8) 办卡被模型给了 60 分钟 -> 兜底回 30
+    t = norm({"day": 0, "earliest_min": 360, "latest_min": 720, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 60, "place": "银行"},
+             "上午去银行办卡")
+    check(t["duration"] == 30, "llm规范: 办卡时长 60->30")
+
+    # 9) 买点东西按 30, 不被误判成买菜 20
+    t = norm({"day": 1, "earliest_min": 1200, "latest_min": 1380, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 20, "place": "超市"},
+             "明天晚上八点去超市买点东西")
+    check(t["duration"] == 30, "llm规范: 买点东西=30")
+
+    # 10) 有起止时间段的任务, 时长按段长, 不被 30 兜底覆盖
+    t = norm({"day": 0, "earliest_min": 540, "latest_min": 720, "fixed_min": None,
+              "deadline_min": None, "priority": 2, "duration_min": 180, "place": "图书馆"},
+             "上午九点到十二点去图书馆自习")
+    check(t["duration"] == 180, "llm规范: 时间段任务时长按段长")
+
 def test_genetic():
     from optimizer import nearest_neighbor, evaluate_order, DEFAULTS
     from genetic import ga_route
@@ -888,6 +958,15 @@ def test_corpus():
     by_text = {r[0]: r[1] for r in rule}
     check(not by_text.get("顺路去趟药店买药", True), "语料: 规则翻车-顺路优先级")
     check(not by_text.get("明天上午十点去药房买药", True), "语料: 规则翻车-药房地点")
+    from corpus import GEN_ENTRIES
+    check(len(GEN_ENTRIES) == 15, "泛化集: 15 条")
+    check(all(need <= set(e) for e in GEN_ENTRIES), "泛化集: 字段齐全")
+    gen_rule = run_rule(GEN_ENTRIES)
+    gen_ok = sum(1 for r in gen_rule if r[1])
+    check(gen_ok >= 4, "泛化集: 规则基线全对 %d/15(>=4)" % gen_ok)
+    gen_by_text = {r[0]: r[1] for r in gen_rule}
+    check(not gen_by_text.get("今晚八点前回公司交报告", True), "泛化集: 规则翻车-今晚")
+    check(not gen_by_text.get("明晚八点去健身房练一个小时", True), "泛化集: 规则翻车-明晚")
 
 
 if __name__ == "__main__":

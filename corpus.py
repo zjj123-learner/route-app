@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""50 条人工标注语料, 用于评测 规则解析 vs LLM 解析.
+"""50 条训练语料 + 15 条泛化集, 用于评测 规则解析 vs LLM 解析.
 
 每一条 = 一句任务文本 + 期望解析结果, 字段约定和 parser.py 保持一致:
   day      日期偏移(今天=0, 明天=1, 后天=2...)
@@ -61,3 +61,26 @@ ENTRIES = [
     {"text": "上午九点到十点去健身房", "day": 0, "earliest": 540, "latest": 600, "fixed": None, "deadline": None, "priority": 2, "duration": 60, "place": "健身房"},
     {"text": "明天晚上八点前去驿站取快递", "day": 1, "earliest": None, "latest": None, "fixed": None, "deadline": 1200, "priority": 2, "duration": 20, "place": "快递驿站"},
 ]
+
+
+# 泛化集(不在训练语料里): 评测"没见过的新表达", 证明 LLM 不是背题.
+# 故意加入了规则解析器处理不了的写法: 今晚/明晚、顺路、药房、菜鸟驿站、接娃、
+# 游泳馆/书店/饭店等新地点、晚上12点等.
+GEN_ENTRIES = [
+    {"text": "明天下午两点半去招商银行办卡", "day": 1, "earliest": 870, "latest": 1050, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "银行"},
+    {"text": "顺路去药房买个药", "day": 0, "earliest": None, "latest": None, "fixed": None, "deadline": None, "priority": 1, "duration": 20, "place": "药店"},
+    {"text": "晚上八点去菜鸟驿站取快递", "day": 0, "earliest": 1200, "latest": 1380, "fixed": None, "deadline": None, "priority": 2, "duration": 20, "place": "快递驿站"},
+    {"text": "明天早上七点去游泳馆游泳", "day": 1, "earliest": 420, "latest": 600, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "游泳馆"},
+    {"text": "后天下午三点半去学校接娃", "day": 2, "earliest": None, "latest": None, "fixed": 930, "deadline": None, "priority": 2, "duration": 30, "place": "学校"},
+    {"text": "明天中午去食堂打饭", "day": 1, "earliest": 660, "latest": 840, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "食堂"},
+    {"text": "今晚八点前回公司交报告", "day": 0, "earliest": None, "latest": None, "fixed": None, "deadline": 1200, "priority": 2, "duration": 30, "place": "公司"},
+    {"text": "明天下午去银行取号", "day": 1, "earliest": 720, "latest": 1080, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "银行"},
+    {"text": "上午十点前去医院抽血", "day": 0, "earliest": None, "latest": None, "fixed": None, "deadline": 600, "priority": 2, "duration": 30, "place": "医院"},
+    {"text": "明天傍晚六点去公园遛狗", "day": 1, "earliest": 1080, "latest": 1260, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "公园"},
+    {"text": "后天上午九点到十点去医院复查", "day": 2, "earliest": 540, "latest": 600, "fixed": None, "deadline": None, "priority": 2, "duration": 60, "place": "医院"},
+    {"text": "明天晚上九点去饭店吃夜宵", "day": 1, "earliest": 1260, "latest": 1440, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "饭店"},
+    {"text": "明晚八点去健身房练一个小时", "day": 1, "earliest": 1200, "latest": 1380, "fixed": None, "deadline": None, "priority": 2, "duration": 60, "place": "健身房"},
+    {"text": "大后天晚上七点去图书馆自习", "day": 3, "earliest": 1140, "latest": 1320, "fixed": None, "deadline": None, "priority": 2, "duration": 30, "place": "图书馆"},
+    {"text": "下午有空去书店逛逛", "day": 0, "earliest": 720, "latest": 1080, "fixed": None, "deadline": None, "priority": 1, "duration": 30, "place": "书店"},
+]
+

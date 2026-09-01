@@ -284,24 +284,31 @@ def plot_time(rows):
 
 
 def plot_evals(rows):
-    """图4: 三算法评价次数 vs n (对数轴)"""
+    """图4: 三算法评价次数 vs n (对数轴)
+    注意: 退火与遗传的评价预算按设计相同(均为 n*1200 左右), 两线会重合,
+    这里给退火/遗传各加 ±0.2 的横轴错位, 并在图上标注, 避免误以为少了一条线."""
     fig, ax = _new_fig()
     sizes = sorted({r["n"] for r in rows})
+    offsets = {"heuristic": 0.0, "simanneal": -0.25, "genetic": 0.25}
     for algo in ALGO_ORDER:
         xs, ys, errs = [], [], []
         for n in sizes:
             vals = [r[algo]["evals"] for r in rows if r["n"] == n]
             if vals:
                 m, s = mean_std(vals)
-                xs.append(n)
+                xs.append(n + offsets[algo])
                 ys.append(m)
                 errs.append(s)
-        _line(ax, xs, ys, errs, algo)
+        _line(ax, xs, ys, errs, algo, alpha=0.92)
     ax.set_yscale("log")
     ax.set_xlabel("任务数 n")
     ax.set_ylabel("候选解评价次数 (对数轴)")
     ax.set_title("三算法的计算量随规模增长")
     ax.grid(alpha=0.3, linestyle="--", which="both")
+    ax.text(0.03, 0.05,
+            "退火与遗传的评价预算按设计相同(n×1200), 两线重合; 横轴已错位显示",
+            transform=ax.transAxes, fontsize=8, color="#444444",
+            bbox=dict(facecolor="white", alpha=0.8, edgecolor="#cccccc"))
     ax.legend()
     _save_fig(fig, "fig4_evals.png")
 
@@ -423,6 +430,9 @@ def build_report(rows_main, rows_win, rows_prio):
     md.append("\n## 4. 结果二: 耗时与计算量\n")
     md.append("![time](charts/fig3_time.png)\n")
     md.append("![evals](charts/fig4_evals.png)\n")
+    md.append("退火与遗传的评价次数曲线在图里几乎重合, 这不是漏画: 两者默认参数都约等于 n×1200 次评价"
+              "(`退火迭代数=n×1200`, `遗传代数×种群=60×(n×20)`), 是有意的**同预算公平对比**——"
+              "同样的评价次数, 看谁最后更优。\n")
     md.append("### 按规模分组的平均耗时\n")
     groups = [(4, 8, "4~8"), (9, 15, "9~15"), (16, 22, "16~22"), (23, 30, "23~30")]
     tbl = [["规模", "实例数", "启发式", "模拟退火", "遗传算法"]]
@@ -575,6 +585,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 

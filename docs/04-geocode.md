@@ -40,9 +40,19 @@
 
 处理"去附近饭店吃饭":以家为中心搜 3 公里内的饭店。这是主流程里泛词(比如只写"超市")的兜底手段。
 
-### `search_candidates(keyword, center, limit=8)` —— 多候选按距离排序
+### `_haversine_m(lat1, lng1, lat2, lng2)` —— 两点直线距离(米)
 
-返回多个候选 `{name, address, lat, lng, distance_m}`,按距离升序。用途是前端**让用户自己选**,而不是程序自动代选——地点有歧义时,把选择权交还用户是产品设计上的自觉(见 `app.py` 的 `need_pick` 流程)。
+全市搜索结果没有高德返回的 `distance` 字段,用 Haversine 公式按经纬度估算直线距离,只用于候选排序(排后面),不参与路径规划(路径规划走真实路网)。
+
+### `_text_search_multi(keyword, city, offset=8)` —— 全市文本搜索(多候选)
+
+`place/text` 接口 + `citylimit="true"`,限定在默认城市内搜多个 POI,带缓存,失败返回空列表。给"去偏远地方办事"兜底:附近搜不到不代表这个城市没有,只是不在附近。
+
+### `search_candidates(keyword, center, limit=8, radius=20000)` —— 多候选按距离排序
+
+先搜 center 周边 `radius` 米内(默认 20km,覆盖同城大部分范围),按距离升序返回 `{name, address, lat, lng, distance_m}`。近处凑不满 `limit` 个时,自动补一次全市文本搜索(`_text_search_multi`),让"去偏远地方办事"也能找到候选——远处的地点按 `_haversine_m` 估算距离排后面,仍可被用户选中。全部结果去重。
+
+用途是前端**让用户自己选**,而不是程序自动代选——地点有歧义时,把选择权交还用户是产品设计上的自觉(见 `app.py` 的 `need_pick` 流程)。
 
 ### `search_poi(keyword, city)` —— 多级兜底搜索
 

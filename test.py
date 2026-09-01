@@ -111,6 +111,57 @@ def test_evals_counter():
     check(counter2["n"] == 0, "不带 _counter 不计数")
 
 
+def test_candidates_far_fallback():
+    """search_candidates: 近处凑不满时补全市文本搜索, 偏远地点也进候选并按距离排序"""
+    import geocode
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        if "place/around" in url:
+            return _FakeResp({"status": "1", "pois": [{
+                "name": "市医院(近)", "address": "城区路1号",
+                "location": "117.48,30.65", "distance": "300",
+            }]})
+        if "place/text" in url:
+            return _FakeResp({"status": "1", "pois": [{
+                "name": "省医院(远)", "address": "郊区大道2号",
+                "location": "117.60,31.00",
+            }]})
+        return _FakeResp({"status": "0", "pois": []})
+
+    geocode._CACHE.clear()
+    with mock.patch.object(geocode.requests, "get", side_effect=fake_get):
+        out = geocode.search_candidates("医院", {"lat": 30.65, "lng": 117.48}, limit=2)
+    geocode._CACHE.clear()
+    check(len(out) == 2, "candidates: 近处不足时补全市搜索, 得到2个候选")
+    check(out[0]["name"] == "市医院(近)", "candidates: 近的排前面")
+    check(out[1]["name"] == "省医院(远)", "candidates: 偏远地点也能进候选")
+    check(out[1]["distance_m"] > out[0]["distance_m"], "candidates: 偏远地点距离更大, 排后面")
+    check(any("place/text" in u for u in calls), "candidates: 确实发起了全市文本搜索")
+
+
+def test_candidates_no_fallback_when_enough():
+    """search_candidates: 近处够 limit 个时不再多请求全市搜索"""
+    import geocode
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        pois = []
+        if "place/around" in url:
+            pois = [{"name": "药店%d" % i, "address": "", "location": "117.48,30.65",
+                     "distance": str(i * 100)} for i in range(3)]
+        return _FakeResp({"status": "1", "pois": pois})
+
+    geocode._CACHE.clear()
+    with mock.patch.object(geocode.requests, "get", side_effect=fake_get):
+        out = geocode.search_candidates("药店", {"lat": 30.65, "lng": 117.48}, limit=3)
+    geocode._CACHE.clear()
+    check(len(out) == 3, "candidates: 近处够3个时直接返回")
+    check(not any("place/text" in u for u in calls), "candidates: 近处够时不请求全市搜索")
+
+
 def test_config():
     """config.py: 配置从环境变量读, 默认关 debug"""
     import config
@@ -995,6 +1046,8 @@ if __name__ == "__main__":
     test_parser()
     test_optimizer()
     test_evals_counter()
+    test_candidates_far_fallback()
+    test_candidates_no_fallback_when_enough()
     test_priority_order()
     test_heuristic()
     test_duration_window()

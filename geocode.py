@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 import re
 import requests
 from config import AMAP_KEY, DEFAULT_CITY
@@ -21,6 +22,16 @@ def _auto_city(address):
 def _valid_location(lng, lat):
     """过滤高德偶尔返回的 (0,0) 无效坐标"""
     return abs(lng) > 0.1 and abs(lat) > 0.1
+
+
+def _haversine_m(lat1, lng1, lat2, lng2):
+    """两点直线距离(米), 给全市搜索结果算距离/排序用"""
+    R = 6371000.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
 
 def _split_address(address):
     """把'安徽省池州市贵池区远东国际花园'拆成 (城市名, 核心词).
@@ -123,19 +134,20 @@ def search_nearby(keyword, center, radius=3000):
     return result
 
 
-def search_candidates(keyword, center, limit=8):
-    """以 center 为中心搜多个候选地点, 按距离排序.
-    返回 [{name, address, lat, lng, distance_m}], 失败返回 []"""
-    cache_key = "cand:" + keyword + "@" + str(center["lat"]) + "," + str(center["lng"])
+def _text_search_multi(keyword, city, offset=8):
+    """全市文本搜索(place/text), 返回多个候选 [{name, address, lat, lng}].
+    带缓存; 失败返回 []. 用于给"偏远地点"补候选: 附近搜不到不等于不存在."""
+    cache_key = "multi:" + keyword + "|" + str(city)
     if cache_key in _CACHE:
         return _CACHE[cache_key]
     params = {
         "key": AMAP_KEY, "keywords": keyword,
-        "location": "{},{}".format(center["lng"], center["lat"]),
-        "radius": 5000, "offset": limit, "extensions": "base",
+        "citylimit": "true", "offset": offset, "extensions": "base",
     }
+    if city:
+        params["city"] = city
     try:
-        resp = requests.get(AROUND_URL, params=params, timeout=5)
+        resp = requests.get(POI_URL, params=params, timeout=5)
         data = resp.json()
     except Exception:
         return []
@@ -146,17 +158,75 @@ def search_candidates(keyword, center, limit=8):
             lng, lat = float(lng), float(lat)
             if not _valid_location(lng, lat):
                 continue
-            try:
-                dist = int(float(p.get("distance") or 0))
-            except (TypeError, ValueError):
-                dist = 0
             out.append({
                 "name": p.get("name", keyword),
                 "address": p.get("address", ""),
                 "lat": lat,
                 "lng": lng,
+            })
+    if out:
+        _CACHE[cache_key] = out
+    return out
+
+
+def search_candidates(keyword, center, limit=8, radius=20000):
+    """以 center 为中心搜候选地点, 按距离排序.
+    1) 先搜 center 周边(radius 内, 默认 20km, 覆盖同城大部分范围);
+    2) 近处凑不满 limit 个时, 补一次全市文本搜索(place/text),
+       让"去偏远地方办事"也能找到候选——远处的地点按距离排后面, 仍可被选中.
+    返回 [{name, address, lat, lng, distance_m}], 失败返回 []"""
+    cache_key = "cand:" + keyword + "@" + str(center["lat"]) + "," + str(center["lng"])
+    if cache_key in _CACHE:
+        return _CACHE[cache_key]
+    params = {
+        "key": AMAP_KEY, "keywords": keyword,
+        "location": "{},{}".format(center["lng"], center["lat"]),
+        "radius": radius, "offset": limit, "extensions": "base",
+    }
+    try:
+        resp = requests.get(AROUND_URL, params=params, timeout=5)
+        data = resp.json()
+    except Exception:
+        data = {}
+    out = []
+    seen = set()
+    if data.get("status") == "1" and data.get("pois"):
+        for p in data["pois"]:
+            lng, lat = p["location"].split(",")
+            lng, lat = float(lng), float(lat)
+            if not _valid_location(lng, lat):
+                continue
+            try:
+                dist = int(float(p.get("distance") or 0))
+            except (TypeError, ValueError):
+                dist = 0
+            name = p.get("name", keyword)
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append({
+                "name": name,
+                "address": p.get("address", ""),
+                "lat": lat,
+                "lng": lng,
                 "distance_m": dist,
             })
+    # 近处不够时, 补全市搜索, 偏远地点也能出现在候选里(距离按直线估算, 排后面)
+    if len(out) < limit:
+        for c in _text_search_multi(keyword, _auto_city(keyword), offset=limit):
+            if c["name"] in seen:
+                continue
+            seen.add(c["name"])
+            out.append({
+                "name": c["name"],
+                "address": c.get("address", ""),
+                "lat": c["lat"],
+                "lng": c["lng"],
+                "distance_m": int(round(_haversine_m(
+                    center["lat"], center["lng"], c["lat"], c["lng"]))),
+            })
+            if len(out) >= limit:
+                break
     out.sort(key=lambda c: c["distance_m"])
     out = out[:limit]
     if out:

@@ -55,10 +55,13 @@ python app.py
 ## 测试与评测
 
 ```bash
-python test.py              # 185 条断言, 一键自测
+python test.py              # 195 条断言, 一键自测
 python benchmark.py         # 三算法 vs 暴力最优(40 实例, 可复现)
 python benchmark.py smoke   # 快速冒烟
 python benchmark_llm.py --rule   # 规则解析 50 语料 + 15 泛化集
+python experiment_report.py      # 论文式实验报告(n=4~30 三算法 vs 暴力最优 + 消融)
+python learn_init.py             # Learning to Optimize(学习引导束搜索初始化)
+python llm_agent.py --bench      # LLM 混合架构对比(粗排+求解器, 无 key 用常识代理)
 ```
 
 ## 文档索引(逐文件详解)
@@ -78,10 +81,14 @@ python benchmark_llm.py --rule   # 规则解析 50 语料 + 15 泛化集
 | `corpus.py` | [docs/11-corpus.md](docs/11-corpus.md) | 解析评测语料(50+15) |
 | `benchmark.py` | [docs/12-benchmark.md](docs/12-benchmark.md) | 三算法对比实验 |
 | `benchmark_llm.py` | [docs/13-benchmark_llm.md](docs/13-benchmark_llm.md) | 规则 vs LLM 对比实验 |
-| `test.py` | [docs/14-test.md](docs/14-test.md) | 185 条自测断言 |
+| `test.py` | [docs/14-test.md](docs/14-test.md) | 195 条自测断言 |
 | `main.py` | [docs/15-main.md](docs/15-main.md) | 命令行入口(不依赖 Web/Key) |
 | `templates/index.html` | [docs/16-frontend.md](docs/16-frontend.md) | 单文件前端 |
 | `static/sw.js` + `manifest.json` | [docs/17-pwa.md](docs/17-pwa.md) | PWA 离线外壳 |
+| `experiment_report.py` | [docs/18-experiment_report.md](docs/18-experiment_report.md) | 论文式实验报告(规模曲线+消融) |
+| `learn_init.py` | [docs/19-learn_init.md](docs/19-learn_init.md) | Learning to Optimize(学习型初始解) |
+| `llm_agent.py` | [docs/20-llm_agent.md](docs/20-llm_agent.md) | LLM 混合架构 + ReAct 工具调用 |
+| `experiment/` | 实验产物 | 3 份实验报告 + 图表 + 缓存(可重跑) |
 | `算法详解.md` | 算法原理长文 | 从问题定义到每段代码的讲解 |
 
 ## 目录结构
@@ -100,6 +107,10 @@ route-app/
 ├── corpus.py           # 评测语料
 ├── benchmark.py        # 算法评测
 ├── benchmark_llm.py    # 解析评测
+├── experiment_report.py# 论文式实验报告(规模+消融)
+├── learn_init.py       # Learning to Optimize
+├── llm_agent.py        # LLM 混合架构 + ReAct
+├── experiment/         # 实验报告/图表/缓存
 ├── test.py             # 自测
 ├── main.py             # CLI 入口
 ├── config.py           # 环境变量配置
@@ -113,3 +124,4 @@ route-app/
 
 - `route.db`(运行产生的数据)与 `*.bak` 备份已 gitignore,不进入仓库
 - 代码与文档中的注释为中文,与仓库语言保持一致
+

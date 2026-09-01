@@ -10,6 +10,12 @@
   5. 变异: 小概率交换/反转一段, 保持种群多样性
   6. 精英保留: 每代最好的 2 个原样进下一代, 保证不会退化
 重复若干代后, 取历史最优个体.
+
+实验扩展(给 benchmark/learn_init 用, 默认不影响线上行为):
+  init_solutions  传入若干初始解(每个是自由任务的顺序 list of task),
+                  作为初始种群的种子个体, 其余个体仍随机. 用于对比
+                  "随机初始化 vs 最近邻 vs 学习型初始化"的收敛速度.
+  curve=True      返回每代历史最优 result["curve"] = [[代数, 最优total], ...].
 """
 import random
 
@@ -83,11 +89,19 @@ def _mutate(chromo, rng):
     return chromo
 
 
+def _order_to_indices(order, free_tasks):
+    """把 task 对象顺序转成 free_tasks 下标顺序"""
+    idx = {id(t): i for i, t in enumerate(free_tasks)}
+    return [idx[id(t)] for t in order]
+
+
 def ga_route(tasks, start, options=None, fixed_positions=None, seed=None,
              pop_size=None, generations=None, mutation_rate=0.15,
-             tournament=3, elite=2):
+             tournament=3, elite=2, init_solutions=None, curve=False):
     """遗传算法主函数, 返回结构和 optimize_route 一致.
-    种子(seed)固定即可复现; pop_size/generations 不传用自适应默认值."""
+    种子(seed)固定即可复现; pop_size/generations 不传用自适应默认值.
+    init_solutions: 初始解列表(每个是自由任务的顺序), 注入初始种群.
+    curve: 是否返回收敛曲线 result["curve"] = [[代数, 历史最优], ...]."""
     opts = dict(DEFAULTS)
     if options:
         opts.update(options)
@@ -103,13 +117,16 @@ def ga_route(tasks, start, options=None, fixed_positions=None, seed=None,
     if m <= 1:
         best_order = _full_order(base, free_slots, list(free_tasks))
         ev = evaluate_order(best_order, start, opts)
-        return {
+        res = {
             "order": best_order,
             "arrivals": ev["arrivals"],
             "stats": {"total": ev["total"], "travel": ev["travel"],
                       "wait": ev["wait"], "penalty": ev["penalty"]},
             "method": "genetic",
         }
+        if curve:
+            res["curve"] = [[1, round(ev["total"], 2)]]
+        return res
 
     if pop_size is None:
         pop_size = 60
@@ -118,13 +135,18 @@ def ga_route(tasks, start, options=None, fixed_positions=None, seed=None,
 
     rng = random.Random(seed)
 
-    # 初始种群: 1 个最近邻解 + 其余随机, 保证起点质量
+    # 初始种群: 默认 1 个最近邻解 + 其余随机; 也可注入若干初始解(学习型初始化)
     nn = nearest_neighbor(free_tasks, start, opts)
-    nn_idx = [free_tasks.index(t) for t in nn]
+    seeds = [_order_to_indices(nn, free_tasks)]
+    if init_solutions:
+        for sol in init_solutions:
+            if len(sol) != m or {id(t) for t in sol} != {id(t) for t in free_tasks}:
+                raise ValueError("init_solutions 里每个解必须是 free 任务的完整排列")
+            seeds.append(_order_to_indices(sol, free_tasks))
     pop = []
     for i in range(pop_size):
-        if i == 0:
-            pop.append(list(nn_idx))
+        if i < len(seeds):
+            pop.append(list(seeds[i]))
         else:
             chromo = list(range(m))
             rng.shuffle(chromo)
@@ -136,11 +158,14 @@ def ga_route(tasks, start, options=None, fixed_positions=None, seed=None,
 
     best_total = None
     best_chromo = None
-    for _ in range(generations):
+    curve_pts = []
+    for gen in range(generations):
         scored = sorted((fitness(c), c) for c in pop)
         if best_total is None or scored[0][0] < best_total:
             best_total = scored[0][0]
             best_chromo = list(scored[0][1])
+        if curve:
+            curve_pts.append([gen + 1, round(best_total, 2)])
         # 精英保留 + 锦标赛选择 + 交叉 + 变异, 生成下一代
         next_pop = [list(c) for _, c in scored[:elite]]
         while len(next_pop) < pop_size:
@@ -154,13 +179,16 @@ def ga_route(tasks, start, options=None, fixed_positions=None, seed=None,
 
     best_order = _full_order(base, free_slots, [free_tasks[i] for i in best_chromo])
     ev = evaluate_order(best_order, start, opts)
-    return {
+    res = {
         "order": best_order,
         "arrivals": ev["arrivals"],
         "stats": {"total": ev["total"], "travel": ev["travel"],
                   "wait": ev["wait"], "penalty": ev["penalty"]},
         "method": "genetic",
     }
+    if curve:
+        res["curve"] = curve_pts
+    return res
 
 
 if __name__ == "__main__":

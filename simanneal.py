@@ -16,6 +16,11 @@
         太小 -> 退火退化成爬山, 跳不出局部最优; 太大 -> 前期纯随机乱走.
   iters 迭代次数. 越多效果越好, 但更慢.
   alpha 降温系数. 默认按 iters 自动算, 保证最后温度约等于 0.01.
+
+实验扩展(给 benchmark/learn_init 用, 默认不影响线上行为):
+  init_order  传入初始解(自由任务的顺序, list of task), 替代默认的最近邻.
+              用于"学习型初始解"对比: 换一个起点, 看退火收敛到哪.
+  curve=True  返回收敛曲线 result["curve"] = [[迭代步, 历史最优total], ...].
 """
 import math
 import random
@@ -72,10 +77,12 @@ def _neighbor(free, rng):
 
 
 def sa_route(tasks, start, options=None, fixed_positions=None, seed=None,
-             t0=None, alpha=None, iters=None):
+             t0=None, alpha=None, iters=None, init_order=None, curve=False):
     """模拟退火主函数, 返回结构和 optimize_route 一致.
     seed: 随机种子, 传了就能复现.
-    t0/alpha/iters 见文件顶部说明, 不传用自适应默认值."""
+    t0/alpha/iters 见文件顶部说明, 不传用自适应默认值.
+    init_order: 自定义初始解(自由任务的顺序), 不传用最近邻.
+    curve: 是否返回收敛曲线 result["curve"] = [[步数, 历史最优], ...]."""
     opts = dict(DEFAULTS)
     if options:
         opts.update(options)
@@ -90,16 +97,24 @@ def sa_route(tasks, start, options=None, fixed_positions=None, seed=None,
     if len(free_tasks) <= 1:
         best_order = _full_order(base, free_slots, list(free_tasks))
         ev = evaluate_order(best_order, start, opts)
-        return {
+        res = {
             "order": best_order,
             "arrivals": ev["arrivals"],
             "stats": {"total": ev["total"], "travel": ev["travel"],
                       "wait": ev["wait"], "penalty": ev["penalty"]},
             "method": "simanneal",
         }
+        if curve:
+            res["curve"] = [[1, round(ev["total"], 2)]]
+        return res
 
-    # 初始解: 用最近邻构造(保证起点不差), 再交给退火去精修/跳坑
-    cur_free = nearest_neighbor(free_tasks, start, opts)
+    # 初始解: 默认最近邻构造(保证起点不差), 也可以外部注入(学习型初始解)
+    if init_order is not None:
+        if len(init_order) != len(free_tasks) or {id(t) for t in init_order} != {id(t) for t in free_tasks}:
+            raise ValueError("init_order 必须是 free 任务的完整排列")
+        cur_free = list(init_order)
+    else:
+        cur_free = nearest_neighbor(free_tasks, start, opts)
     best_free = list(cur_free)
     best_total = evaluate_order(_full_order(base, free_slots, best_free), start, opts)["total"]
     cur_total = best_total
@@ -113,6 +128,8 @@ def sa_route(tasks, start, options=None, fixed_positions=None, seed=None,
         alpha = (0.01 / t0) ** (1.0 / iters)
 
     rng = random.Random(seed)
+    curve_pts = []
+    sample_step = max(1, iters // 200)
     for k in range(iters):
         T = t0 * (alpha ** k)
         cand = _neighbor(cur_free, rng)
@@ -122,16 +139,23 @@ def sa_route(tasks, start, options=None, fixed_positions=None, seed=None,
             cur_free, cur_total = cand, total
             if total < best_total:
                 best_free, best_total = list(cand), total
+        if curve and k % sample_step == 0:
+            curve_pts.append([k + 1, round(best_total, 2)])
+    if curve:
+        curve_pts.append([iters, round(best_total, 2)])
 
     best_order = _full_order(base, free_slots, best_free)
     ev = evaluate_order(best_order, start, opts)
-    return {
+    res = {
         "order": best_order,
         "arrivals": ev["arrivals"],
         "stats": {"total": ev["total"], "travel": ev["travel"],
                   "wait": ev["wait"], "penalty": ev["penalty"]},
         "method": "simanneal",
     }
+    if curve:
+        res["curve"] = curve_pts
+    return res
 
 
 def sa_compare(tasks, start, options=None, fixed_positions=None, seed=None):

@@ -41,6 +41,12 @@ route_results = {
 - 固定 seed,结果可复现;
 - 前端拿到 `all_routes`,可以切换看三条路线对比。
 
+每个算法还额外测量两个指标,供前端"算法对比"可视化:
+- `elapsed_ms`:墙钟耗时(`time.perf_counter` 包住求解调用);
+- `evals`:评价次数——给 `options` 注入 `_counter={"n":0}`,由 `optimizer.evaluate_order` 每评估一个候选顺序 +1,量化"计算工作量"(暴力枚举 n 任务 = n! 次,退火 = 迭代次数,遗传 ≈ 种群×代数)。
+
+两者与 `stats.total` 一起构成"耗时/工作量/成本"三指标对比,都是越小越好。
+
 ### 7. `_payload(rr)` —— 结果转前端结构
 - `insert_base_stops` 插入回家休息停靠(按时段偏好);
 - 生成 `stops`(含到达/离开时间)、`route_lines`(每段轨迹 polyline,历史计划没有轨迹所以前端画直连虚线)、`summary`(总公里数/总分钟/结束时间);

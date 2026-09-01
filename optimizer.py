@@ -41,6 +41,11 @@ def travel_minutes(a, b, opts):
     return round(km / speed * 60 + extra) + opts.get("buffer", 0)
 
 def evaluate_order(order, start, opts):
+    # 可选的评价计数器: 传 _counter={"n":0} 时每评估一个候选顺序 +1.
+    # 用于算法对比可视化的"评价次数"指标(见 app.py 的 /api/plan).
+    counter = opts.get("_counter")
+    if counter is not None:
+        counter["n"] += 1
     t = opts["start_min"]
     travel = 0
     wait = 0

@@ -166,6 +166,25 @@
 .route-tab.on { border-color: #4f46e5; background: #eef2ff; }
 .route-tab.on b { color: #4f46e5; }
 .route-same { width: 100%; text-align: center; font-size: 12px; color: #0d9488; }
+.tab-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+/* ===== 地图图例(三算法同屏) ===== */
+.map-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; align-items: center; }
+.lg-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 2px 10px; border-radius: 8px; background: #f1f5f9; color: #475569; }
+.lg-chip:hover { background: #e2e8f0; }
+.lg-chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.lg-note { color: #94a3b8; margin-left: 2px; }
+
+/* ===== 算法对比(耗时/评价次数/总成本) ===== */
+.cmp-head { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--text-soft); margin: 6px 0 4px; }
+.cmp-head span { display: inline-flex; align-items: center; gap: 5px; }
+.cmp-head i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.cmp-row { display: grid; grid-template-columns: 64px repeat(3, 1fr); gap: 6px; align-items: center; margin: 5px 0; }
+.cmp-label { font-size: 12px; color: var(--text-soft); }
+.cmp-bar { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.cmp-bar i { height: 11px; border-radius: 6px; display: block; min-width: 2px; }
+.cmp-bar span { font-size: 11px; color: var(--text-soft); white-space: nowrap; }
+.cmp-note { margin-top: 8px; font-size: 11px; color: #94a3b8; line-height: 1.7; }
   .plan-head {
     display: flex; flex-wrap: wrap; gap: 6px 16px;
     font-size: 13px; color: var(--text-soft);
@@ -426,6 +445,7 @@
   <div class="card">
     <h2>🗺️ 路线地图</h2>
     <div id="map"></div>
+    <div id="mapLegend" class="map-legend" style="display:none"></div>
     <div id="mapMsg" class="geo-msg"></div>
   </div>
 
@@ -1062,6 +1082,9 @@ async function runPlan(places, forcedLocks, textOverride) {
 
 // ===== 三算法切换: 推荐一(启发式) / 推荐二(模拟退火) / 推荐三(遗传) =====
 const ROUTE_KEYS = ['heuristic', 'simanneal', 'genetic'];
+// 三算法配色: 地图同屏显示时, 选中的用深色粗线, 其他用同色浅细线
+const ROUTE_COLORS = {heuristic: '#3b82f6', simanneal: '#f59e0b', genetic: '#10b981'};
+const ROUTE_NAMES = {heuristic: '启发式(最近邻+2-opt)', simanneal: '模拟退火', genetic: '遗传算法'};
 
 function routeLabel(key) {
   return key === 'heuristic' ? '推荐一' : (key === 'simanneal' ? '推荐二' : '推荐三');
@@ -1080,8 +1103,9 @@ function renderRouteTabs(data, activeKey) {
     const r = allRoutes[k];
     const on = k === activeRoute ? ' on' : '';
     const star = k === data.best ? ' ⭐' : '';
+    const dot = '<i class="tab-dot" style="background:' + ROUTE_COLORS[k] + '"></i>';
     return '<div class="route-tab' + on + '" data-route="' + k + '" title="点击切换推荐路线">'
-      + '<b>' + routeLabel(k) + star + '</b>'
+      + '<b>' + dot + routeLabel(k) + star + '</b>'
       + '<small>' + fmtDur((r.summary || {}).total_minutes) + '</small>'
       + '</div>';
   }).join('');
@@ -1146,6 +1170,46 @@ function renderVisuals(data) {
   const tl = renderTimeline(data);
   if (tl) box.insertAdjacentHTML('beforeend', '<div class="tl-section">' + tl + '</div>');
   box.insertAdjacentHTML('beforeend', statsHTML(data));
+  box.insertAdjacentHTML('beforeend', algoCompareHTML());
+}
+
+// ===== 算法对比: 耗时 / 评价次数 / 总成本(数据来自后端 all_routes 的 elapsed_ms/evals/stats) =====
+function cmpBar(label, rows, pick, fmt) {
+  const max = Math.max.apply(null, rows.map(pick).concat([1]));
+  return '<div class="cmp-row"><div class="cmp-label">' + label + '</div>'
+    + rows.map((x) => '<div class="cmp-bar"><i style="background:' + x.color + ';width:'
+      + (pick(x) / max * 100).toFixed(1) + '%"></i><span>' + fmt(pick(x)) + '</span></div>').join('')
+    + '</div>';
+}
+
+function algoCompareHTML() {
+  // 历史计划恢复时没有 all_routes, 不画对比图
+  if (!allRoutes || !lastData || !lastData.all_routes) return '';
+  const keys = ROUTE_KEYS.filter((k) => allRoutes[k]);
+  if (!keys.length) return '';
+  const rows = keys.map((k) => {
+    const r = allRoutes[k];
+    const m = r.method || '';
+    const methodText = m === 'brute-force' ? '暴力枚举'
+      : m === 'simanneal' ? '模拟退火'
+      : m === 'genetic' ? '遗传算法'
+      : '启发式(最近邻+2-opt)';
+    return {
+      color: ROUTE_COLORS[k],
+      name: routeLabel(k) + '(' + methodText + ')',
+      total: (r.stats && r.stats.total) || 0,
+      ms: r.elapsed_ms != null ? r.elapsed_ms : 0,
+      ev: r.evals != null ? r.evals : 0,
+    };
+  });
+  return '<div class="subtitle" style="margin-top:14px">🧪 算法对比 '
+    + '<small style="font-weight:normal;color:var(--text-soft)">耗时/评价次数/总成本 越小越好</small></div>'
+    + '<div class="cmp-head">' + rows.map((x) => '<span><i style="background:' + x.color + '"></i>' + x.name + '</span>').join('') + '</div>'
+    + cmpBar('耗时(ms)', rows, (x) => x.ms, (v) => v > 0 && v < 1 ? '<1ms' : Math.round(v) + 'ms')
+    + cmpBar('评价次数', rows, (x) => x.ev, (v) => v.toLocaleString())
+    + cmpBar('总成本', rows, (x) => x.total, (v) => v.toLocaleString())
+    + '<div class="cmp-note">复杂度: 暴力 O(n!·n) · 启发式 O(n²·k) · 模拟退火 O(迭代·n) · 遗传 O(种群·代数·n)'
+    + '<br>评价次数 = 候选顺序被 evaluate_order 评估的次数(不含最近邻构造)</div>';
 }
 
 function lgRow(color, name, min, pct) {
@@ -1435,6 +1499,11 @@ function renderMapNow(data) {
   clearHomeMarker();
   const start = data.start;
   const stops = data.stops || [];
+  // 三算法同屏: 有 all_routes 时把三条路线都画出来, 选中的深色粗线, 其他浅色细线;
+  // 历史计划/单路线场景没有 all_routes, 退化成原来的单线画法.
+  const keys = ROUTE_KEYS.filter((k) => allRoutes && allRoutes[k]);
+  const activeKey = activeRoute || null;
+  const activeColor = (activeKey && ROUTE_COLORS[activeKey]) || '#4f46e5';
   if (mapImpl === 'amap') {
     const overlays = [];
     overlays.push(new AMap.Marker({
@@ -1442,23 +1511,47 @@ function renderMapNow(data) {
       content: '<div class="m-dot m-home">🏠</div>',
       offset: new AMap.Pixel(-14, -14)
     }));
-    (data.route_lines || []).forEach((seg) => {
-      if (seg.points && seg.points.length > 1) {
-        overlays.push(new AMap.Polyline({
-          path: seg.points.map((p) => [p[1], p[0]]),
-          strokeColor: '#4f46e5', strokeWeight: 5, strokeOpacity: 0.85, lineJoin: 'round'
-        }));
-      } else {
-        overlays.push(new AMap.Polyline({
-          path: [[seg.from.lng, seg.from.lat], [seg.to.lng, seg.to.lat]],
-          strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85, strokeStyle: 'dashed'
-        }));
-      }
-    });
+    if (keys.length) {
+      keys.forEach((k) => {
+        const on = k === activeKey;
+        const color = ROUTE_COLORS[k];
+        (allRoutes[k].route_lines || []).forEach((seg) => {
+          if (seg.points && seg.points.length > 1) {
+            overlays.push(new AMap.Polyline({
+              path: seg.points.map((p) => [p[1], p[0]]),
+              strokeColor: color, strokeWeight: on ? 6 : 2.5,
+              strokeOpacity: on ? 0.95 : 0.28, lineJoin: 'round',
+              zIndex: on ? 30 : 10
+            }));
+          } else {
+            overlays.push(new AMap.Polyline({
+              path: [[seg.from.lng, seg.from.lat], [seg.to.lng, seg.to.lat]],
+              strokeColor: color, strokeWeight: on ? 5 : 2.5,
+              strokeOpacity: on ? 0.95 : 0.25, strokeStyle: 'dashed',
+              zIndex: on ? 30 : 10
+            }));
+          }
+        });
+      });
+    } else {
+      (data.route_lines || []).forEach((seg) => {
+        if (seg.points && seg.points.length > 1) {
+          overlays.push(new AMap.Polyline({
+            path: seg.points.map((p) => [p[1], p[0]]),
+            strokeColor: '#4f46e5', strokeWeight: 5, strokeOpacity: 0.85, lineJoin: 'round'
+          }));
+        } else {
+          overlays.push(new AMap.Polyline({
+            path: [[seg.from.lng, seg.from.lat], [seg.to.lng, seg.to.lat]],
+            strokeColor: '#4f46e5', strokeWeight: 4, strokeOpacity: 0.85, strokeStyle: 'dashed'
+          }));
+        }
+      });
+    }
     let num = 0;
     stops.forEach((s) => {
       const label = s.type === 'base' ? '休' : String(++num);
-      const color = s.type === 'base' ? '#0d9488' : '#4f46e5';
+      const color = s.type === 'base' ? '#0d9488' : activeColor;
       const m = new AMap.Marker({
         position: [s.lng, s.lat],
         content: '<div class="m-dot" style="background:' + color + '">' + label + '</div>',
@@ -1473,13 +1566,29 @@ function renderMapNow(data) {
     });
     map.add(overlays);
     routeLayer = overlays;
-    map.setFitView(overlays, false, [60, 60, 60, 60]);
+    if (overlays.length) map.setFitView(overlays, false, [60, 60, 60, 60]);
+    renderMapLegend(keys);
     return;
   }
 
   // ---- Leaflet 回退 ----
   const latlngs = [[start.lat, start.lng]].concat(stops.map(s => [s.lat, s.lng]));
-  if (data.route_lines && data.route_lines.length) {
+  const allPts = [];
+  if (keys.length) {
+    keys.forEach((k) => {
+      const on = k === activeKey;
+      (allRoutes[k].route_lines || []).forEach((seg) => {
+        (seg.points || []).forEach((p) => allPts.push(p));
+        allPts.push([seg.from.lat, seg.from.lng], [seg.to.lat, seg.to.lng]);
+        if (seg.points && seg.points.length > 1) {
+          L.polyline(seg.points, {color: ROUTE_COLORS[k], weight: on ? 5 : 2, opacity: on ? 0.95 : 0.3}).addTo(routeLayer);
+        } else {
+          L.polyline([[seg.from.lat, seg.from.lng], [seg.to.lat, seg.to.lng]],
+            {color: ROUTE_COLORS[k], weight: on ? 4 : 2, opacity: on ? 0.95 : 0.25, dashArray: '5 7'}).addTo(routeLayer);
+        }
+      });
+    });
+  } else if (data.route_lines && data.route_lines.length) {
     data.route_lines.forEach((seg) => {
       if (seg.points && seg.points.length > 1) {
         L.polyline(seg.points, {color: '#4f46e5', weight: 4}).addTo(routeLayer);
@@ -1495,13 +1604,32 @@ function renderMapNow(data) {
   let num = 0;
   stops.forEach((s) => {
     const label = s.type === 'base' ? '休' : String(++num);
-    const color = s.type === 'base' ? '#0d9488' : '#4f46e5';
+    const color = s.type === 'base' ? '#0d9488' : activeColor;
     L.marker([s.lat, s.lng], {icon: pinIcon(label, color)})
       .addTo(routeLayer)
       .bindPopup(s.name + (s.place && s.place !== s.name ? ' → ' + s.place : ''));
   });
-  const bounds = L.latLngBounds(latlngs);
+  const bounds = L.latLngBounds(allPts.length ? allPts : latlngs);
   map.fitBounds(bounds, {padding: [30, 30]});
+  renderMapLegend(keys);
+}
+
+// 地图下方的三算法图例: 点击图例也能切换当前路线
+function renderMapLegend(keys) {
+  const el = document.getElementById('mapLegend');
+  if (!el) return;
+  if (!keys || !keys.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'flex';
+  el.innerHTML = keys.map((k) =>
+    '<span class="lg-chip" data-route="' + k + '"><i style="background:' + ROUTE_COLORS[k] + '"></i>'
+    + routeLabel(k) + (k === activeRoute ? ' ✓' : '') + '</span>'
+  ).join('') + '<span class="lg-note">粗深 = 当前选中 · 浅细 = 其他算法</span>';
+  el.querySelectorAll('.lg-chip').forEach((ch) =>
+    ch.addEventListener('click', () => switchRoute(ch.dataset.route)));
 }
 
 function pinIcon(label, color) {

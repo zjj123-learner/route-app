@@ -1,4 +1,5 @@
 import json
+import time
 from flask import Flask, render_template, request, jsonify
 from llm_parser import parse_with_llm
 import config
@@ -193,11 +194,22 @@ def plan():
                   else "直线估算(高德路径规划不可用, 已自动降级)")
 
     # 三个算法各出一条路线(复用同一张路网矩阵, 不重复请求高德)
-    base_result = optimize_route(tasks, start, options, fixed_positions=fixed_positions or None)
+    # 每个算法都测量: 墙钟耗时(elapsed_ms) + 评价次数(evals, 由 evaluate_order 计数)
+    # 供前端"算法对比"可视化展示, 三个指标都是"越小越好".
+    def _measure(fn):
+        t0 = time.perf_counter()
+        counter = {"n": 0}
+        algo_opts = dict(options)
+        algo_opts["_counter"] = counter
+        rr = fn(algo_opts)
+        rr["elapsed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        rr["evals"] = counter["n"]
+        return rr
+
     route_results = {
-        "heuristic": base_result,
-        "simanneal": sa_route(tasks, start, options, fixed_positions=fixed_positions or None, seed=20260826),
-        "genetic": ga_route(tasks, start, options, fixed_positions=fixed_positions or None, seed=20260826),
+        "heuristic": _measure(lambda o: optimize_route(tasks, start, o, fixed_positions=fixed_positions or None)),
+        "simanneal": _measure(lambda o: sa_route(tasks, start, o, fixed_positions=fixed_positions or None, seed=20260826)),
+        "genetic": _measure(lambda o: ga_route(tasks, start, o, fixed_positions=fixed_positions or None, seed=20260826)),
     }
 
     def _payload(rr):
@@ -242,6 +254,8 @@ def plan():
             "summary": summary,
             "stats": rr["stats"],
             "method": rr["method"],
+            "elapsed_ms": rr.get("elapsed_ms"),
+            "evals": rr.get("evals"),
         }
 
     payloads = {k: _payload(rr) for k, rr in route_results.items()}

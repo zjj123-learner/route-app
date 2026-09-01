@@ -89,6 +89,28 @@ def test_optimizer():
             check(s["depart"] <= task["deadline"], "截止前完成: " + task["name"])
 
 
+def test_evals_counter():
+    """评价次数计数器: 暴力枚举 n 个任务应恰好评估 n! 次(供算法对比可视化)"""
+    from optimizer import DEFAULTS, optimize_route
+    tasks = [{"name": "t%d" % i, "place": None,
+              "lat": 31.0 + i * 0.01, "lng": 121.0 + i * 0.01,
+              "priority": 2, "duration": 30,
+              "earliest": None, "latest": None, "fixed": None,
+              "deadline": None, "day": 0} for i in range(4)]
+    opts = dict(DEFAULTS)
+    counter = {"n": 0}
+    opts["_counter"] = counter
+    optimize_route(tasks, {"name": "家", "lat": 31.0, "lng": 121.0}, opts)
+    check(counter["n"] == 24, "暴力枚举 4 任务应评估 4!=24 次, 实际 %d" % counter["n"])
+
+    # 不传计数器时行为不变(默认路径不依赖该字段)
+    counter2 = {"n": 0}
+    opts2 = dict(DEFAULTS)
+    result = optimize_route(tasks, {"name": "家", "lat": 31.0, "lng": 121.0}, opts2)
+    check(len(result["order"]) == 4, "不带 _counter 也正常求解")
+    check(counter2["n"] == 0, "不带 _counter 不计数")
+
+
 def test_config():
     """config.py: 配置从环境变量读, 默认关 debug"""
     import config
@@ -972,6 +994,7 @@ def test_corpus():
 if __name__ == "__main__":
     test_parser()
     test_optimizer()
+    test_evals_counter()
     test_priority_order()
     test_heuristic()
     test_duration_window()
